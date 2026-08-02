@@ -83,14 +83,54 @@ class RotaryAxisConfig(StrictConfigModel):
         return normalized
 
 
+class XYZAConfiguration(StrictConfigModel):
+    """Measured work-coordinate inputs needed by the future XYZA mapper.
+
+    The record is optional on ``MachineDefinition`` so migration can represent
+    unknown measurements without manufacturing defaults.
+    """
+
+    rotary_pivot_y: float
+    rotary_pivot_z: float
+    rotary_zero_deg: float
+    spindle_axis: tuple[float, float, float]
+    g54_origin: tuple[float, float, float]
+
+    @field_validator(
+        "rotary_pivot_y",
+        "rotary_pivot_z",
+        "rotary_zero_deg",
+    )
+    @classmethod
+    def validate_finite_scalar(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("XYZA coordinates and angles must be finite")
+        return value
+
+    @field_validator("spindle_axis", "g54_origin")
+    @classmethod
+    def validate_vector(cls, value: tuple[float, float, float]) -> tuple[float, float, float]:
+        if not all(math.isfinite(component) for component in value):
+            raise ValueError("XYZA vectors must be finite")
+        return value
+
+    @model_validator(mode="after")
+    def validate_spindle_axis(self) -> XYZAConfiguration:
+        if math.sqrt(sum(component * component for component in self.spindle_axis)) <= 1e-12:
+            raise ValueError("spindle_axis must be non-zero")
+        return self
+
 class MachineDefinition(StrictConfigModel):
     """Minimum machine profile required by planning and validation."""
 
     name: str = "Makera rotary"
     profile_verified: bool = False
     x_limits: AxisLimits
+    y_limits: AxisLimits | None = None
     z_limits: AxisLimits
     rotary_axis: RotaryAxisConfig = Field(default_factory=RotaryAxisConfig)
+    xyza_configuration: XYZAConfiguration | None = None
+    machine_assembly_configured: bool = False
     max_spindle_rpm: int | None = Field(default=None, gt=0)
     spindle_power_w: PositiveFloat | None = None
     max_linear_speed_mm_min: PositiveFloat | None = None
