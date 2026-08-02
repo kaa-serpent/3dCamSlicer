@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/kaa-serpent/3dCamSlicer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/kaa-serpent/3dCamSlicer/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://www.python.org/downloads/release/python-3120/"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white"></a>
   <img alt="284 tests passing locally" src="https://img.shields.io/badge/tests-284%20passing-2ea44f">
   <img alt="PySide6 desktop UI" src="https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white">
