@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible RotaryCAM defect or unsafe behavior
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve RotaryCAM. Never test unexpected motion first on a live machine.
+  - type: input
+    id: revision
+    attributes:
+      label: RotaryCAM revision
+      description: Commit SHA or version where the problem occurs.
+      placeholder: 91457d4 or 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version, and whether you used the CLI or desktop UI.
+      placeholder: Windows 11, Python 3.12, desktop UI
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: List the smallest safe sequence of steps and sanitized inputs needed to reproduce the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: safety
+    attributes:
+      label: CNC safety impact
+      options:
+        - None observed
+        - Potentially unsafe toolpath or motion
+        - Validation or export safety bypass
+        - Unknown
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and discussions.
+          required: true
+        - label: I reproduced this without putting a live machine or person at risk.
+          required: true
+        - label: I removed files or data I do not have permission to share.
+          required: true

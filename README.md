@@ -1,16 +1,45 @@
-# RotaryCAM for Makera Z1
+<p align="center">
+  <img src="docs/assets/rotarycam-social-preview.jpg" alt="RotaryCAM — 4-axis CNC toolpaths for Makera Z1" width="100%">
+</p>
 
-RotaryCAM is a Makera Z1-focused Python 3.12 engine and desktop preview for generating X/Z/A CNC
-toolpaths around an X-aligned rotary axis. It imports STL/OBJ meshes, certifies a strict
-radial representation, protects manual supports, selects flat and ball cutters,
-generates roughing/finishing/rest operations, simulates stock removal, validates machine
-limits, and emits a conservative community-derived subset for controller review.
+<h1 align="center">RotaryCAM for Makera Z1</h1>
+
+<p align="center">
+  A safety-first Python CAM engine and desktop application for generating, simulating,
+  and reviewing 4-axis X/Z/A rotary CNC toolpaths from STL and OBJ meshes.
+</p>
+
+<p align="center">
+  <a href="https://www.python.org/downloads/release/python-3120/"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white"></a>
+  <img alt="284 tests passing locally" src="https://img.shields.io/badge/tests-284%20passing-2ea44f">
+  <img alt="PySide6 desktop UI" src="https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white">
+  <a href="LICENSE"><img alt="Proprietary license" src="https://img.shields.io/badge/license-proprietary-f59e0b"></a>
+  <a href="https://github.com/kaa-serpent/3dCamSlicer/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/kaa-serpent/3dCamSlicer?style=flat"></a>
+</p>
+
+RotaryCAM imports STL/OBJ meshes, certifies or envelopes their radial representation,
+protects manual supports, selects flat, ball, and tapered cutters, generates
+roughing/finishing/rest operations, simulates stock removal, validates machine limits,
+and emits a conservative community-derived G-code subset for controller review.
 
 > **Machine safety:** `makera_z1_community_profile()` is deliberately unverified and has
 > no option that silently marks it verified. Export is blocked until
 > `MachineDefinition.profile_verified` is explicitly true in a reviewed, persisted machine
 > configuration. Every generated program must still be reviewed, simulated, dry-run, and
 > verified against the exact Z1 controller, firmware, rotary setup, workholding, and tool.
+
+## Why RotaryCAM?
+
+- **One end-to-end workflow:** mesh import, radial sampling, planning, simulation,
+  validation, 3D preview, and guarded export.
+- **Built for rotary geometry:** canonical X/A grids, continuous unwrapped rotary angles,
+  indexed or simultaneous finishing, and explicit radial TCP semantics.
+- **Stock-aware multi-tool planning:** each accepted operation starts from the simulated
+  residual stock left by the preceding cutter.
+- **CNC safety gates:** travel, spindle, safe-radius, reach, support, containment, rapid,
+  and profile-verification checks run before export.
+- **Desktop and CLI interfaces:** use the PySide6/PyVistaQt application for visual review
+  or the typed command-line pipeline for automation.
 
 ## Makera Z1 community reference
 
@@ -162,6 +191,16 @@ git diff --check
 
 The core engine has no GUI dependency; PySide6/PyVistaQt live in the `ui` extra and
 optional acceleration packages live in `performance`.
+
+## Community
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+- Use the [issue tracker](https://github.com/kaa-serpent/3dCamSlicer/issues) for reproducible
+  bugs and scoped feature requests.
+- Use [GitHub Discussions](https://github.com/kaa-serpent/3dCamSlicer/discussions) for usage
+  questions, ideas, and project feedback.
+- Report security-sensitive findings privately according to [SECURITY.md](SECURITY.md).
+- All participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

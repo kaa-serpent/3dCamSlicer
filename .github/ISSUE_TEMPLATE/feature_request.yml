@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a focused improvement to RotaryCAM
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Explain the workflow limitation or user need.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful outcome rather than only an implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Geometry and sampling
+        - Toolpath planning
+        - Simulation and validation
+        - Desktop UI
+        - CLI and project format
+        - Machine profiles and post-processing
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: CNC safety considerations
+      description: Note any effect on motion, limits, export, workholding, tools, or controller assumptions.
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and discussions.
+          required: true
+        - label: I understand that controller compatibility requires verified machine-specific evidence.
+          required: true

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/kaa-serpent/3dCamSlicer/discussions
+    about: Ask for help, share feedback, or discuss an idea before filing an issue.
+  - name: Private security report
+    url: https://github.com/kaa-serpent/3dCamSlicer/security/advisories/new
+    about: Report vulnerabilities and CNC safety bypasses privately.

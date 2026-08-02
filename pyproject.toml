@@ -9,6 +9,25 @@ description = "Four-axis CNC toolpath generator around the X axis"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
+keywords = [
+    "4-axis",
+    "cam",
+    "cnc",
+    "gcode",
+    "makera-z1",
+    "rotary-axis",
+    "toolpath",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Manufacturing",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
 dependencies = [
     "numpy>=2.0",
     "pydantic>=2.8",
@@ -34,6 +53,12 @@ performance = [
     "embreex>=2.17",
     "numba>=0.61",
 ]
+
+[project.urls]
+Homepage = "https://github.com/kaa-serpent/3dCamSlicer"
+Repository = "https://github.com/kaa-serpent/3dCamSlicer.git"
+Issues = "https://github.com/kaa-serpent/3dCamSlicer/issues"
+Discussions = "https://github.com/kaa-serpent/3dCamSlicer/discussions"
 
 [project.scripts]
 rotarycam = "rotarycam.cli:app"
