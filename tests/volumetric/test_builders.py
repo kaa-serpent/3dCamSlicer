@@ -11,12 +11,14 @@ from rotarycam.supports.models import (
 )
 from rotarycam.volumetric import (
     InvalidSolidMeshError,
+    MemoryBudgetExceeded,
     SolidVolume,
     SparseVolume,
     VolumetricSettings,
     VoxelLattice,
     build_cylindrical_stock,
     build_mesh_volume,
+    build_mesh_volume_on_lattice,
     build_rectangular_stock,
     classify_mesh_points,
     rasterize_retention_volumes,
@@ -54,6 +56,29 @@ def test_mesh_builder_rejects_open_or_inconsistent_meshes() -> None:
     inconsistent.faces[0] = inconsistent.faces[0][::-1]
     with pytest.raises(InvalidSolidMeshError, match="winding"):
         build_mesh_volume(inconsistent, VolumetricSettings(0.5))
+
+
+def test_mesh_builder_uses_existing_lattice_and_refuses_insufficient_budget() -> None:
+    mesh = trimesh.creation.box(extents=(2.0, 2.0, 2.0))
+    lattice = VoxelLattice(
+        (-2.25, -2.25, -2.25),
+        (0.5, 0.5, 0.5),
+        (10, 10, 10),
+    )
+
+    volume = build_mesh_volume_on_lattice(
+        mesh,
+        lattice,
+        brick_size=2,
+        memory_budget_bytes=1_000_000,
+        classifier=ray_parity_classifier,
+    )
+
+    assert volume.lattice == lattice
+    assert volume.to_dense()[4, 4, 4]
+    assert not volume.to_dense()[0, 0, 0]
+    with pytest.raises(MemoryBudgetExceeded):
+        build_mesh_volume_on_lattice(mesh, lattice, memory_budget_bytes=1)
 
 
 def test_parity_supports_disjoint_components_and_nested_cavity() -> None:

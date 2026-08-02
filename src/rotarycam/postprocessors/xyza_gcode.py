@@ -81,6 +81,9 @@ def _render_xyza_gcode(
     machine: MachineDefinition,
     *,
     preview: bool,
+    tool_number: int | None = None,
+    spindle_rpm: int | None = None,
+    tool_schedule: Sequence[tuple[int, int, int]] | None = None,
 ) -> str:
     if not isinstance(start, MachinePose):
         raise TypeError("start must be a MachinePose")
@@ -90,12 +93,53 @@ def _render_xyza_gcode(
         lines.append("(RotaryCAM XYZA PREVIEW - NOT FOR MACHINE EXECUTION)")
     lines.extend(("G21", "G90"))
     lines.extend(machine.program_header)
+    if tool_schedule is not None and (tool_number is not None or spindle_rpm is not None):
+        raise ToolpathValidationError(
+            "use either a tool schedule or one tool number/spindle speed pair"
+        )
+    if (tool_number is None) != (spindle_rpm is None):
+        raise ToolpathValidationError(
+            "tool number and spindle speed must be provided together"
+        )
+    schedule = (
+        tuple(tool_schedule)
+        if tool_schedule is not None
+        else (
+            ((0, tool_number, spindle_rpm),)
+            if tool_number is not None and spindle_rpm is not None
+            else ()
+        )
+    )
+    schedule_by_offset: dict[int, tuple[int, int]] = {}
+    for offset, scheduled_tool, scheduled_rpm in schedule:
+        if offset < 0 or offset >= len(blocks):
+            raise ToolpathValidationError("tool-change block offset lies outside the program")
+        if offset in schedule_by_offset:
+            raise ToolpathValidationError("tool-change block offsets must be unique")
+        if scheduled_tool <= 0 or scheduled_rpm <= 0:
+            raise ToolpathValidationError(
+                "tool number and spindle speed must be greater than zero"
+            )
+        if machine.max_spindle_rpm is not None and scheduled_rpm > machine.max_spindle_rpm:
+            raise ToolpathValidationError("requested spindle speed exceeds machine limit")
+        schedule_by_offset[offset] = (scheduled_tool, scheduled_rpm)
 
     previous = start
     inverse_time_active = False
-    for block in blocks:
+    spindle_active = False
+    for block_index, block in enumerate(blocks):
         if not isinstance(block, MotionBlock):
             raise TypeError("blocks must contain only MotionBlock records")
+        scheduled = schedule_by_offset.get(block_index)
+        if scheduled is not None:
+            if spindle_active:
+                lines.append("M5")
+            if inverse_time_active:
+                lines.append("G94")
+                inverse_time_active = False
+            scheduled_tool, scheduled_rpm = scheduled
+            lines.extend((f"T{scheduled_tool} M6", f"S{scheduled_rpm} M3"))
+            spindle_active = True
         axis_words = _changed_axis_words(previous, block.pose, machine)
         if block.kind is MotionKind.RAPID:
             lines.append(" ".join(("G0", *axis_words)))
@@ -114,6 +158,8 @@ def _render_xyza_gcode(
             lines.append(" ".join(("G1", *axis_words, f"F{rendered_feed}")))
         previous = block.pose
 
+    if spindle_active:
+        lines.append("M5")
     lines.append("G94")
     lines.extend(machine.program_footer)
     return "\n".join(lines) + "\n"
@@ -133,12 +179,24 @@ def generate_xyza_gcode(
     start: MachinePose,
     blocks: Sequence[MotionBlock],
     machine: MachineDefinition,
+    *,
+    tool_number: int | None = None,
+    spindle_rpm: int | None = None,
+    tool_schedule: Sequence[tuple[int, int, int]] | None = None,
 ) -> str:
     """Generate validated G93 XYZA G-code for a verified capable profile."""
 
     _require_export_profile(machine)
     _validate_dynamic_durations(start, blocks, machine)
-    return _render_xyza_gcode(start, blocks, machine, preview=False)
+    return _render_xyza_gcode(
+        start,
+        blocks,
+        machine,
+        preview=False,
+        tool_number=tool_number,
+        spindle_rpm=spindle_rpm,
+        tool_schedule=tool_schedule,
+    )
 
 
 __all__ = ["generate_xyza_gcode", "generate_xyza_preview"]

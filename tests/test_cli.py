@@ -98,6 +98,32 @@ def test_inspect_rejects_missing_file() -> None:
 
 
 class FakeProjectEngine:
+    def build_volumetric_geometry(self) -> tuple[object, SimpleNamespace]:
+        return object(), SimpleNamespace(lattice=SimpleNamespace(shape=(3, 4, 5)))
+
+    def generate_xyza_plan(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            passes=(
+                SimpleNamespace(
+                    tool_number=1,
+                    kind=SimpleNamespace(value="finishing"),
+                    blocks=(object(),),
+                ),
+            )
+        )
+
+    def simulate_xyza(self) -> tuple[SimpleNamespace, ...]:
+        return (SimpleNamespace(removed_voxels=12, residual_voxels=2),)
+
+    def prepare_xyza_export(self) -> None:
+        return None
+
+    def export_xyza_gcode(
+        self, path: Path, *, acknowledgement_digest: str | None = None
+    ) -> None:
+        del acknowledgement_digest
+        path.write_text("G94\n", encoding="ascii")
+
     def build_target(self) -> SimpleNamespace:
         return SimpleNamespace(
             shape=(3, 8),
@@ -132,10 +158,45 @@ def test_project_pipeline_commands(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     exported = runner.invoke(cli.app, ["export", str(project_path), str(output)])
 
     assert sampled.exit_code == 0
-    assert "3 x 8" in sampled.stdout
+    assert "3 x 4 x 5" in sampled.stdout
     assert planned.exit_code == 0
-    assert "T1 helical" in planned.stdout
+    assert "T1 finishing" in planned.stdout
     assert simulated.exit_code == 0
-    assert "12.500 mm^3" in simulated.stdout
+    assert "Removed voxels: 12" in simulated.stdout
     assert exported.exit_code == 0
-    assert output.read_text(encoding="ascii") == "M30\n"
+    assert output.read_text(encoding="ascii") == "G94\n"
+
+
+def test_export_forwards_inaccessible_digest_to_xyza_pipeline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project_path = tmp_path / "project.json"
+    project_path.write_text("{}", encoding="utf-8")
+    received: list[str | None] = []
+
+    class FakeXYZAEngine:
+        def prepare_xyza_export(self) -> None:
+            return None
+
+        def export_xyza_gcode(
+            self, path: Path, *, acknowledgement_digest: str | None = None
+        ) -> None:
+            received.append(acknowledgement_digest)
+            path.write_text("G94\n", encoding="ascii")
+
+    monkeypatch.setattr(cli, "_project_engine", lambda _path: FakeXYZAEngine())
+    output = tmp_path / "output.nc"
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "export",
+            str(project_path),
+            str(output),
+            "--ack-inaccessible",
+            "a" * 64,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert received == ["a" * 64]

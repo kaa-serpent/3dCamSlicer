@@ -203,3 +203,32 @@ def test_generate_xyza_gcode_blocks_incomplete_assembly_and_erased_motion() -> N
             ),
             machine,
         )
+
+
+def test_generate_xyza_gcode_restores_g94_around_tool_schedule() -> None:
+    start = MachinePose(0.0, 0.0, 0.0, 0.0)
+    blocks = (
+        MotionBlock(
+            MachinePose(1.0, 0.0, 0.0, 0.0),
+            MotionKind.LINEAR,
+            duration_s=1.0,
+            feed=100.0,
+        ),
+        MotionBlock(MachinePose(2.0, 0.0, 0.0, 0.0), MotionKind.RAPID, 1.0),
+        MotionBlock(
+            MachinePose(3.0, 0.0, 0.0, 0.0),
+            MotionKind.LINEAR,
+            duration_s=1.0,
+            feed=100.0,
+        ),
+    )
+
+    output = generate_xyza_gcode(
+        start,
+        blocks,
+        export_machine(),
+        tool_schedule=((0, 1, 12_000), (2, 2, 10_000)),
+    )
+
+    assert "G0 X2.000\nM5\nG94\nT2 M6\nS10000 M3\nG93" in output
+    assert output.endswith("M5\nG94\nM5\n")

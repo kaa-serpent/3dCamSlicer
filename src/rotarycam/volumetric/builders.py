@@ -273,6 +273,42 @@ def build_mesh_volume(
     return SolidVolume(lattice, store, guard)
 
 
+def build_mesh_volume_on_lattice(
+    mesh: trimesh.Trimesh,
+    lattice: VoxelLattice,
+    *,
+    brick_size: int = 8,
+    memory_budget_bytes: int | None = None,
+    classifier: MeshPointClassifier = trimesh_point_classifier,
+) -> SolidVolume:
+    """Rasterize a closed mesh on an existing stock lattice.
+
+    Sharing the exact lattice is required by volumetric planning and simulation;
+    geometry outside the lattice is rejected by the engine's containment checks.
+    The optional budget covers the dense classifier working set and is never
+    traded for a coarser tolerance.
+    """
+
+    components = _validate_solid_mesh(mesh)
+    if memory_budget_bytes is not None:
+        lattice.require_memory_budget(
+            memory_budget_bytes,
+            bytes_per_voxel=128 + len(components),
+        )
+    points = _centres(lattice)
+    inside = classify_mesh_points(components, points, classifier=classifier).reshape(
+        lattice.shape
+    )
+    guard = _triangle_surface_guard(mesh, lattice)
+    occupation = np.asarray(inside | guard, dtype=np.bool_)
+    store = SparseBrickStore.from_dense(
+        lattice,
+        occupation,
+        brick_shape=(brick_size, brick_size, brick_size),
+    )
+    return SolidVolume(lattice, store, guard)
+
+
 def rasterize_retention_volumes(
     target: SparseVolume,
     retentions: Sequence[RetentionVolume],
