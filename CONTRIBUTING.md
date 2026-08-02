@@ -11,10 +11,9 @@ must be reviewable, deterministic, tested, and explicit about safety assumptions
 - Never claim Makera controller compatibility without a verified machine profile and
   controller-specific evidence.
 
-RotaryCAM is source-available under a proprietary license; it is not open-source software.
-Submitting an issue or pull request does not change the terms in [LICENSE](LICENSE). Only
-submit material you have the right to share. The maintainer may request separate written
-terms before accepting a contribution.
+RotaryCAM is open-source software distributed under the BSD 3-Clause License. By submitting
+a contribution, you agree that it may be distributed under the terms in [LICENSE](LICENSE).
+Only submit material you have the right to share.
 
 ## Development setup
 

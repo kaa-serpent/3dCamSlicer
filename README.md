@@ -14,7 +14,7 @@
   <a href="https://www.python.org/downloads/release/python-3120/"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white"></a>
   <img alt="284 tests passing locally" src="https://img.shields.io/badge/tests-284%20passing-2ea44f">
   <img alt="PySide6 desktop UI" src="https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white">
-  <a href="LICENSE"><img alt="Proprietary license" src="https://img.shields.io/badge/license-proprietary-f59e0b"></a>
+  <a href="LICENSE"><img alt="BSD 3-Clause license" src="https://img.shields.io/badge/license-BSD--3--Clause-blue.svg"></a>
   <a href="https://github.com/kaa-serpent/3dCamSlicer/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/kaa-serpent/3dCamSlicer?style=flat"></a>
 </p>
 
@@ -205,4 +205,7 @@ optional acceleration packages live in `performance`.
 
 ## License
 
-RotaryCAM is proprietary software. See [LICENSE](LICENSE).
+RotaryCAM is open-source software distributed under the [BSD 3-Clause License](LICENSE).
+Source and binary redistributions must preserve the copyright and license notice crediting
+**kaa-serpent**. The copyright holder's name may not be used to endorse derived products
+without prior written permission.

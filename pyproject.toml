@@ -23,7 +23,7 @@ classifiers = [
     "Environment :: Console",
     "Environment :: X11 Applications :: Qt",
     "Intended Audience :: Manufacturing",
-    "License :: Other/Proprietary License",
+    "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering",
