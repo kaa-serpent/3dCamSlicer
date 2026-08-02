@@ -172,6 +172,91 @@ class XYZAConfiguration(StrictConfigModel):
         return self
 
 
+class MachineCoordinateSoftLimits(StrictConfigModel):
+    """Soft-endstop values stored in the controller's machine coordinates.
+
+    They are evidence about the controller configuration, not G54 travel limits.
+    RotaryCAM must not use them for pose validation until the MCS-to-G54 mapping
+    for the current setup has been established.
+    """
+
+    enabled: bool
+    minimum_mm: tuple[float, float, float]
+
+    @field_validator("minimum_mm")
+    @classmethod
+    def validate_minimum(
+        cls, value: tuple[float, float, float]
+    ) -> tuple[float, float, float]:
+        if not all(math.isfinite(component) for component in value):
+            raise ValueError("MCS soft-limit minima must be finite")
+        return value
+
+
+class ControllerConfigSnapshot(StrictConfigModel):
+    """Typed, provenance-preserving snapshot of an active controller config."""
+
+    source_name: str
+    source_sha256: str
+    work_area_xy_mm: tuple[PositiveFloat, PositiveFloat]
+    default_seek_rate_mm_min: PositiveFloat
+    soft_limits_mcs: MachineCoordinateSoftLimits
+    anchor1_mcs_xy_mm: tuple[float, float]
+    rotation_offsets_config: tuple[float, float, float]
+
+    @field_validator("source_name")
+    @classmethod
+    def validate_source_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or "\n" in normalized or "\r" in normalized:
+            raise ValueError("controller config source name must be one non-empty line")
+        return normalized
+
+    @field_validator("source_sha256")
+    @classmethod
+    def validate_sha256(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 64 or any(
+            character not in "0123456789ABCDEF" for character in normalized
+        ):
+            raise ValueError("source_sha256 must be a 64-character hexadecimal digest")
+        return normalized
+
+    @field_validator("anchor1_mcs_xy_mm", "rotation_offsets_config")
+    @classmethod
+    def validate_finite_tuple(cls, value: tuple[float, ...]) -> tuple[float, ...]:
+        if not all(math.isfinite(component) for component in value):
+            raise ValueError("controller configuration coordinates must be finite")
+        return value
+
+
+class FirmwareImageSnapshot(StrictConfigModel):
+    """Identity read from a firmware image present on the controller storage."""
+
+    source_name: str
+    version: str
+    build: str
+    source_sha256: str
+
+    @field_validator("source_name", "version", "build")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or "\n" in normalized or "\r" in normalized:
+            raise ValueError("firmware snapshot text must be one non-empty line")
+        return normalized
+
+    @field_validator("source_sha256")
+    @classmethod
+    def validate_sha256(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 64 or any(
+            character not in "0123456789ABCDEF" for character in normalized
+        ):
+            raise ValueError("source_sha256 must be a 64-character hexadecimal digest")
+        return normalized
+
+
 class MachineObservationMetadata(StrictConfigModel):
     """Informational observations that are not machine-coordinate contracts.
 
@@ -182,6 +267,8 @@ class MachineObservationMetadata(StrictConfigModel):
     """
 
     controller_firmware: str | None = None
+    controller_config: ControllerConfigSnapshot | None = None
+    installed_firmware_image: FirmwareImageSnapshot | None = None
     home_display_position_mm: tuple[float, float, float] | None = None
     rotary_mount_display_xy_mm: tuple[float, float] | None = None
     coordinate_display_decimals: int | None = Field(default=None, ge=0, le=9)

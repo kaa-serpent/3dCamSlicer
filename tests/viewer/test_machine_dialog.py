@@ -20,6 +20,7 @@ from rotarycam.machine import (
     FrameKind,
     MachineAssembly,
     MachineCapabilities,
+    makera_z1_community_profile,
 )
 from rotarycam.viewer.machine_dialog import MachineDialog
 
@@ -70,6 +71,21 @@ def test_editing_round_trips_all_fields_but_clears_verification(qtbot: object) -
     assert "always marked unverified" in dialog.findChild(
         type(dialog.validation_label), "verificationWarning"
     ).text()
+
+
+def test_dialog_round_trips_bundled_controller_config_provenance(qtbot: object) -> None:
+    original = makera_z1_community_profile()
+    dialog = MachineDialog(original)
+    qtbot.addWidget(dialog)  # type: ignore[attr-defined]
+
+    restored = dialog.machine()
+
+    assert restored == original
+    assert restored.observations is not None
+    assert restored.observations.controller_config is not None
+    assert restored.observations.controller_config.source_name == "config.txt"
+    assert restored.observations.installed_firmware_image is not None
+    assert restored.observations.installed_firmware_image.version == "1.0.4Beta2"
 
 
 def test_new_machine_uses_unverified_safe_defaults(qtbot: object) -> None:
