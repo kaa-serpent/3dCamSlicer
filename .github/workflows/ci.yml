@@ -20,6 +20,11 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
+      - name: Install Linux UI libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libegl1
+
       - name: Install
         run: uv sync --locked --extra dev --extra ui
 
