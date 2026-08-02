@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.Python
+
+# Environnements et outils
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Distribution
+build/
+dist/
+*.egg-info/
+
+# IDE et système
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Fichiers générés par RotaryCAM
+*.nc
+*.gcode

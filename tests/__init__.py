@@ -1,0 +1,1 @@
+"""RotaryCAM test suite."""
