@@ -1,6 +1,11 @@
 """Bundled machine profiles derived from inspectable reference material."""
 
-from rotarycam.config import AxisLimits, MachineDefinition, RotaryAxisConfig
+from rotarycam.config import (
+    AxisLimits,
+    MachineDefinition,
+    MachineObservationMetadata,
+    RotaryAxisConfig,
+)
 
 
 def makera_z1_community_profile() -> MachineDefinition:
@@ -37,6 +42,13 @@ def makera_z1_community_profile() -> MachineDefinition:
         max_rotary_stock_radius=40.0,
         coordinate_precision=3,
         program_header=("G54",),
+        observations=MachineObservationMetadata(
+            controller_firmware="1.0.4Beta5",
+            home_display_position_mm=(190.550, 192.639, 69.343),
+            rotary_mount_display_xy_mm=(60.0, 69.0),
+            coordinate_display_decimals=3,
+            unresolved_rotary_direction_report="A CW = Y+",
+        ),
     )
 
 

@@ -8,7 +8,12 @@ pytest.importorskip("pytestqt")
 
 from PySide6.QtWidgets import QDialog
 
-from rotarycam.config import AxisLimits, MachineDefinition, RotaryAxisConfig
+from rotarycam.config import (
+    AxisLimits,
+    MachineDefinition,
+    MachineObservationMetadata,
+    RotaryAxisConfig,
+)
 from rotarycam.machine import (
     AssemblyRole,
     Box,
@@ -45,6 +50,10 @@ def verified_machine() -> MachineDefinition:
         coordinate_precision=4,
         program_header=("G54", "G90"),
         program_footer=("M5", "M30"),
+        observations=MachineObservationMetadata(
+            controller_firmware="test-firmware",
+            home_display_position_mm=(1.0, 2.0, 3.0),
+        ),
     )
 
 
@@ -57,6 +66,7 @@ def test_editing_round_trips_all_fields_but_clears_verification(qtbot: object) -
 
     assert edited == original.model_copy(update={"profile_verified": False})
     assert edited.profile_verified is False
+    assert edited.observations == original.observations
     assert "always marked unverified" in dialog.findChild(
         type(dialog.validation_label), "verificationWarning"
     ).text()

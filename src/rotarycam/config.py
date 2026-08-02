@@ -171,6 +171,53 @@ class XYZAConfiguration(StrictConfigModel):
             raise ValueError("spindle_axis must be non-zero")
         return self
 
+
+class MachineObservationMetadata(StrictConfigModel):
+    """Informational observations that are not machine-coordinate contracts.
+
+    These fields preserve controller and display readings without treating them
+    as travel limits, G54 coordinates, rotary-pivot measurements, positioning
+    accuracy, or controller-capability evidence.  Planning and export validation
+    must use the dedicated :class:`MachineDefinition` fields instead.
+    """
+
+    controller_firmware: str | None = None
+    home_display_position_mm: tuple[float, float, float] | None = None
+    rotary_mount_display_xy_mm: tuple[float, float] | None = None
+    coordinate_display_decimals: int | None = Field(default=None, ge=0, le=9)
+    unresolved_rotary_direction_report: str | None = None
+
+    @field_validator("controller_firmware", "unresolved_rotary_direction_report")
+    @classmethod
+    def validate_observation_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("machine observation text must not be empty")
+        if "\n" in normalized or "\r" in normalized:
+            raise ValueError("machine observation text must be one line")
+        return normalized
+
+    @field_validator("home_display_position_mm")
+    @classmethod
+    def validate_home_display_position(
+        cls, value: tuple[float, float, float] | None
+    ) -> tuple[float, float, float] | None:
+        if value is not None and not all(math.isfinite(component) for component in value):
+            raise ValueError("observed Home display coordinates must be finite")
+        return value
+
+    @field_validator("rotary_mount_display_xy_mm")
+    @classmethod
+    def validate_rotary_mount_display_position(
+        cls, value: tuple[float, float] | None
+    ) -> tuple[float, float] | None:
+        if value is not None and not all(math.isfinite(component) for component in value):
+            raise ValueError("observed rotary mount display coordinates must be finite")
+        return value
+
+
 class MachineDefinition(StrictConfigModel):
     """Minimum machine profile required by planning and validation."""
 
@@ -185,6 +232,7 @@ class MachineDefinition(StrictConfigModel):
     dynamics: dict[str, AxisDynamics] | None = None
     capabilities: MachineCapabilities | None = None
     assembly: MachineAssembly | None = None
+    observations: MachineObservationMetadata | None = None
     max_spindle_rpm: int | None = Field(default=None, gt=0)
     spindle_power_w: PositiveFloat | None = None
     max_linear_speed_mm_min: PositiveFloat | None = None

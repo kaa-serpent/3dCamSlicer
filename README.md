@@ -52,6 +52,13 @@ and [fourth-axis module page](https://global.makera.com/products/makera-z1-4th-a
 are useful measurement references, not controller certification. RotaryCAM makes no claim
 that generic G-code is compatible with a Makera controller.
 
+The bundled profile also preserves a small set of community observations (controller
+firmware and displayed coordinates) as informational metadata. They are deliberately not
+used as travel, G54, pivot, accuracy or controller-capability inputs. The measured
+Ø16 × 23 mm spindle-nose/quick-change envelope is only an editable tool-dialog prefill;
+stickout remains unset until it is measured from each tool tip to the nose face after that
+tool's calibration. See [Makera Z1 measurement status](docs/makera-z1-measurements.md).
+
 To make a profile export-eligible, independently measure and review at least:
 
 - X/Y/Z travel, A direction and mechanical zero;

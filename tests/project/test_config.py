@@ -5,6 +5,7 @@ from rotarycam.config import (
     AxisLimits,
     FinishingStrategy,
     MachineDefinition,
+    MachineObservationMetadata,
     MachiningSettings,
     RadialSamplingMode,
     RotaryAxisConfig,
@@ -38,6 +39,32 @@ def test_machine_profile_validates_safe_serialization_parameters() -> None:
             z_limits=AxisLimits(minimum=-50.0, maximum=100.0),
             program_header=("G21\nG90",),
         )
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_machine_observations_reject_non_finite_display_coordinates(value: float) -> None:
+    with pytest.raises(ValidationError, match="Home display coordinates must be finite"):
+        MachineObservationMetadata(home_display_position_mm=(value, 0.0, 0.0))
+
+    with pytest.raises(ValidationError, match="rotary mount display coordinates must be finite"):
+        MachineObservationMetadata(rotary_mount_display_xy_mm=(0.0, value))
+
+
+@pytest.mark.parametrize(
+    "field_name", ["controller_firmware", "unresolved_rotary_direction_report"]
+)
+@pytest.mark.parametrize("value", ["", "  ", "line one\nline two"])
+def test_machine_observations_reject_ambiguous_text_payloads(
+    field_name: str, value: str
+) -> None:
+    with pytest.raises(ValidationError):
+        MachineObservationMetadata.model_validate({field_name: value})
+
+
+@pytest.mark.parametrize("value", [-1, 10])
+def test_machine_observations_reject_invalid_display_decimal_count(value: int) -> None:
+    with pytest.raises(ValidationError):
+        MachineObservationMetadata(coordinate_display_decimals=value)
 
 
 @pytest.mark.parametrize(

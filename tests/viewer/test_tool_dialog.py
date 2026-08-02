@@ -9,6 +9,7 @@ pytest.importorskip("pytestqt")
 from PySide6.QtWidgets import QDialog
 
 from rotarycam.tools.models import Tool, ToolHolder, ToolType
+from rotarycam.tools.profiles import MAKERA_Z1_QUICK_CHANGE_ENVELOPE
 from rotarycam.viewer.tool_dialog import ONE_EIGHTH_INCH_MM, ToolDialog
 
 
@@ -45,6 +46,16 @@ def test_dialog_defaults_to_personal_makera_z1_eighth_inch_bits(qtbot: object) -
     assert tool.stepover == pytest.approx(1.0)
     assert dialog.tip_diameter.isEnabled() is False
     assert dialog.taper_length.isEnabled() is False
+    assert dialog.assembly_measured.isChecked() is False
+    assert dialog.holder_diameter.value() == pytest.approx(
+        MAKERA_Z1_QUICK_CHANGE_ENVELOPE.diameter
+    )
+    assert dialog.holder_length.value() == pytest.approx(
+        MAKERA_Z1_QUICK_CHANGE_ENVELOPE.length
+    )
+    assert tool.stickout is None
+    assert tool.holder is None
+    assert "every tool change" in dialog.stickout.toolTip()
 
 
 def test_dialog_builds_ball_bit_with_all_machining_fields(qtbot: object) -> None:

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from rotarycam.tools.models import Tool, ToolHolder, ToolType
+from rotarycam.tools.profiles import MAKERA_Z1_QUICK_CHANGE_ENVELOPE
 
 ONE_EIGHTH_INCH_MM = 3.175
 
@@ -60,8 +61,20 @@ class ToolDialog(QDialog):
             "Stickout and holder measured for collision validation", self
         )
         self.stickout = self._dimension(50.0)
-        self.holder_diameter = self._dimension(20.0)
-        self.holder_length = self._dimension(30.0)
+        self.stickout.setToolTip(
+            "Measure from the tool tip to the spindle-nose face after this tool's "
+            "automatic calibration. Recheck after every tool change."
+        )
+        self.holder_diameter = self._dimension(
+            MAKERA_Z1_QUICK_CHANGE_ENVELOPE.diameter
+        )
+        self.holder_length = self._dimension(MAKERA_Z1_QUICK_CHANGE_ENVELOPE.length)
+        holder_tooltip = (
+            "Conservative Makera Z1 spindle-nose/quick-change envelope. Confirm these "
+            "dimensions on the machine before marking the assembly as measured."
+        )
+        self.holder_diameter.setToolTip(holder_tooltip)
+        self.holder_length.setToolTip(holder_tooltip)
         self.assembly_measured.toggled.connect(self._update_assembly_fields)
         self.max_stepdown = self._dimension(1.0)
         self.stepover = self._dimension(1.0)

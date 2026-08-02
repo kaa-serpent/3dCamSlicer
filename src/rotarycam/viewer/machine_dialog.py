@@ -436,6 +436,9 @@ class MachineDialog(QDialog):
             dynamics=dynamics,
             capabilities=capabilities,
             assembly=assembly,
+            observations=(
+                None if self._source_machine is None else self._source_machine.observations
+            ),
             max_spindle_rpm=self._optional_int(self.max_spindle_rpm),
             spindle_power_w=self._optional_float(self.spindle_power),
             max_linear_speed_mm_min=self._optional_float(self.max_linear_speed),

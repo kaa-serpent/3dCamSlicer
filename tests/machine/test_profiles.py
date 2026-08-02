@@ -22,6 +22,25 @@ def test_makera_z1_community_profile_records_declared_reference_limits() -> None
     assert machine.safe_radius == 45.0
     assert machine.coordinate_precision == 3
     assert machine.program_header == ("G54",)
+    assert machine.observations is not None
+    assert machine.observations.controller_firmware == "1.0.4Beta5"
+    assert machine.observations.home_display_position_mm == pytest.approx(
+        (190.550, 192.639, 69.343)
+    )
+    assert machine.observations.rotary_mount_display_xy_mm == pytest.approx((60.0, 69.0))
+    assert machine.observations.coordinate_display_decimals == 3
+    assert machine.observations.unresolved_rotary_direction_report == "A CW = Y+"
+
+
+def test_makera_observations_do_not_complete_xyza_or_enable_export() -> None:
+    machine = makera_z1_community_profile()
+
+    assert machine.profile_verified is False
+    assert machine.y_limits is None
+    assert machine.xyza_configuration is None
+    assert machine.dynamics is None
+    assert machine.capabilities is None
+    assert machine.assembly is None
 
 
 def test_makera_z1_community_profile_uses_continuous_positive_a_about_x() -> None:
@@ -45,6 +64,13 @@ def test_makera_z1_capabilities_are_json_serializable() -> None:
     assert payload["max_linear_speed_mm_min"] == 1_200.0
     assert payload["rotary_axis"]["max_speed_deg_per_min"] == 3_600.0
     assert payload["rotary_axis"]["positioning_precision_deg"] == 0.1
+    assert payload["observations"] == {
+        "controller_firmware": "1.0.4Beta5",
+        "home_display_position_mm": [190.55, 192.639, 69.343],
+        "rotary_mount_display_xy_mm": [60.0, 69.0],
+        "coordinate_display_decimals": 3,
+        "unresolved_rotary_direction_report": "A CW = Y+",
+    }
 
 
 @pytest.mark.parametrize("value", [0.0, -1.0, float("nan"), float("inf")])
