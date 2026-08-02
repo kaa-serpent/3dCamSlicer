@@ -8,7 +8,7 @@ pytest.importorskip("pytestqt")
 
 from PySide6.QtWidgets import QDialog
 
-from rotarycam.tools.models import Tool, ToolType
+from rotarycam.tools.models import Tool, ToolHolder, ToolType
 from rotarycam.viewer.tool_dialog import ONE_EIGHTH_INCH_MM, ToolDialog
 
 
@@ -109,3 +109,30 @@ def test_dialog_prefills_every_field_when_editing(qtbot: object) -> None:
     assert dialog.tool_type.currentData() == ToolType.TAPERED
     assert dialog.tip_diameter.value() == pytest.approx(0.3)
     assert dialog.taper_length.value() == pytest.approx(7.5)
+
+
+def test_dialog_collects_measured_stickout_and_holder_for_xyza_export(
+    qtbot: object,
+) -> None:
+    dialog = ToolDialog(next_number=5)
+    qtbot.addWidget(dialog)  # type: ignore[attr-defined]
+    dialog.assembly_measured.setChecked(True)
+    dialog.stickout.setValue(25.0)
+    dialog.holder_diameter.setValue(18.0)
+    dialog.holder_length.setValue(30.0)
+
+    tool = dialog.tool()
+
+    assert tool.stickout == pytest.approx(25.0)
+    assert tool.holder == ToolHolder(diameter=18.0, length=30.0)
+
+
+def test_legacy_tool_remains_explicitly_incomplete_for_export(qtbot: object) -> None:
+    dialog = ToolDialog(tool=_tapered_tool())
+    qtbot.addWidget(dialog)  # type: ignore[attr-defined]
+
+    rebuilt = dialog.tool()
+
+    assert dialog.assembly_measured.isChecked() is False
+    assert rebuilt.stickout is None
+    assert rebuilt.holder is None

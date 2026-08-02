@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pyvista as pv
@@ -15,12 +15,16 @@ from rotarycam.viewer.state import SceneLayer
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from rotarycam.config import MachineDefinition
+    from rotarycam.planning.freeform import PlannedPass
     from rotarycam.planning.operation import MachiningOperation
     from rotarycam.stock import Stock
+    from rotarycam.volumetric import SparseVolume
 
 LAYER_COLORS: dict[SceneLayer, str] = {
     SceneLayer.TARGET: "lightgray",
     SceneLayer.STOCK: "steelblue",
+    SceneLayer.MACHINE: "slategray",
     SceneLayer.SUPPORTS: "darkorange",
     SceneLayer.TOOLPATHS: "limegreen",
     SceneLayer.RESIDUAL: "firebrick",
@@ -36,6 +40,7 @@ class OperationPolylineData:
     path_count: int
     point_count: int
     tool_number: int = 0
+    a_values: np.ndarray | None = None
 
 
 def trimesh_to_polydata(mesh: trimesh.Trimesh) -> pv.PolyData:
@@ -111,6 +116,110 @@ def prepare_toolpaths(
     return [prepare_operation_toolpaths(operation) for operation in operations]
 
 
+def prepare_xyza_passes(
+    passes: Sequence[PlannedPass],
+) -> list[OperationPolylineData]:
+    """Prepare G54 TCP polylines without projecting XYZA motion onto a radial grid."""
+
+    prepared: list[OperationPolylineData] = []
+    for planned_pass in passes:
+        poses = (planned_pass.start_pose, *(block.pose for block in planned_pass.blocks))
+        points = np.asarray([(pose.x, pose.y, pose.z) for pose in poses], dtype=np.float64)
+        lines = np.concatenate(
+            (np.asarray((len(poses),), dtype=np.int64), np.arange(len(poses), dtype=np.int64))
+        )
+        prepared.append(
+            OperationPolylineData(
+                points=points,
+                lines=lines,
+                path_count=1,
+                point_count=len(poses),
+                tool_number=planned_pass.tool_number,
+                a_values=np.asarray([pose.a for pose in poses], dtype=np.float64),
+            )
+        )
+    return prepared
+
+
+def sparse_volume_to_grid(volume: SparseVolume) -> pv.DataSet:
+    """Build one renderable cell grid from an immutable sparse XYZ volume."""
+
+    lattice = volume.lattice
+    lower, _ = lattice.bounds
+    image = pv.ImageData(
+        dimensions=tuple(component + 1 for component in lattice.shape),
+        spacing=lattice.spacing,
+        origin=lower,
+    )
+    image.cell_data["occupied"] = np.asarray(
+        volume.to_dense(), dtype=np.uint8
+    ).ravel(order="F")
+    return cast(pv.DataSet, image.threshold(0.5, scalars="occupied"))
+
+
+def _part_data_in_g54(
+    data: pv.DataSet,
+    machine: MachineDefinition | None,
+    *,
+    a_deg: float = 0.0,
+) -> pv.DataSet:
+    """Transform a render-only part dataset without changing domain geometry."""
+
+    if machine is None or machine.xyza_configuration is None:
+        return data
+    from rotarycam.machine import XYZAKinematics
+
+    matrix = XYZAKinematics.from_machine(machine).matrix_at(a_deg)
+    return data.transform(matrix, inplace=False)
+
+
+def _frustum_polydata(primitive: Any) -> pv.PolyData:
+    profile = np.asarray(
+        (
+            (0.0, -primitive.length / 2.0),
+            (primitive.radius_start, -primitive.length / 2.0),
+            (primitive.radius_end, primitive.length / 2.0),
+            (0.0, primitive.length / 2.0),
+        ),
+        dtype=np.float64,
+    )
+    mesh = trimesh.creation.revolve(profile)
+    alignment = trimesh.geometry.align_vectors(  # type: ignore[no-untyped-call]
+        (0.0, 0.0, 1.0), primitive.axis
+    )
+    if alignment is not None:
+        mesh.apply_transform(alignment)
+    mesh.apply_translation(primitive.center)
+    return trimesh_to_polydata(mesh)
+
+
+def machine_primitive_polydata(primitive: Any) -> pv.DataSet:
+    """Convert one measured box, cylinder or frustum envelope for safety review."""
+
+    from rotarycam.machine import Box, Cylinder
+
+    if isinstance(primitive, Box):
+        half = tuple(component / 2.0 for component in primitive.size)
+        return pv.Box(
+            bounds=(
+                primitive.center[0] - half[0],
+                primitive.center[0] + half[0],
+                primitive.center[1] - half[1],
+                primitive.center[1] + half[1],
+                primitive.center[2] - half[2],
+                primitive.center[2] + half[2],
+            )
+        )
+    if isinstance(primitive, Cylinder):
+        return pv.Cylinder(
+            center=primitive.center,
+            direction=primitive.axis,
+            radius=primitive.radius,
+            height=primitive.length,
+        )
+    return _frustum_polydata(primitive)
+
+
 class SceneController:
     """Own PyVista actors while keeping layer visibility independent."""
 
@@ -167,7 +276,9 @@ class SceneController:
         self.add_polydata(SceneLayer.TARGET, trimesh_to_polydata(mesh))
         self.plotter.reset_camera()
 
-    def set_stock(self, stock: Stock) -> None:
+    def set_stock(
+        self, stock: Stock, *, machine: MachineDefinition | None = None
+    ) -> None:
         """Display a transparent analytical stock around the rotary axis."""
 
         from rotarycam.stock import CylindricalStock, RectangularStock
@@ -193,7 +304,67 @@ class SceneController:
             )
         else:
             raise TypeError(f"unsupported stock type: {type(stock).__name__}")
-        self.add_polydata(SceneLayer.STOCK, data, opacity=0.25)
+        self.add_polydata(
+            SceneLayer.STOCK,
+            _part_data_in_g54(data, machine),
+            opacity=0.25,
+        )
+
+    def set_target_volume(
+        self,
+        volume: SparseVolume,
+        *,
+        machine: MachineDefinition | None = None,
+    ) -> None:
+        """Render the exact part volume at measured A0 in G54 when available."""
+
+        self.clear_layer(SceneLayer.TARGET, render=False)
+        self.add_polydata(
+            SceneLayer.TARGET,
+            _part_data_in_g54(sparse_volume_to_grid(volume), machine),
+            opacity=0.65,
+            render=False,
+        )
+        self.plotter.render()
+        self.plotter.reset_camera()
+
+    def set_residual_volume(
+        self,
+        volume: SparseVolume | None,
+        *,
+        machine: MachineDefinition | None = None,
+    ) -> None:
+        """Show only stock material left outside the target after simulation."""
+
+        self.clear_layer(SceneLayer.RESIDUAL, render=False)
+        if volume is not None and np.any(volume.to_dense()):
+            self.add_polydata(
+                SceneLayer.RESIDUAL,
+                _part_data_in_g54(sparse_volume_to_grid(volume), machine),
+                opacity=0.8,
+                render=False,
+            )
+        self.plotter.render()
+
+    def set_machine(self, machine: MachineDefinition) -> None:
+        """Preview measured machine envelopes; absent assembly remains visibly empty."""
+
+        self.clear_layer(SceneLayer.MACHINE, render=False)
+        if machine.assembly is not None:
+            color = (
+                "seagreen"
+                if machine.profile_verified and machine.assembly.is_complete
+                else "darkorange"
+            )
+            for primitive in machine.assembly.primitives:
+                self.add_polydata(
+                    SceneLayer.MACHINE,
+                    machine_primitive_polydata(primitive),
+                    color=color,
+                    opacity=0.3,
+                    render=False,
+                )
+        self.plotter.render()
 
     def set_toolpaths(self, operations: Sequence[MachiningOperation]) -> None:
         """Replace the toolpath layer with X/A/radius trajectories in XYZ space."""
@@ -212,6 +383,8 @@ class SceneController:
                 continue
             data = pv.PolyData(prepared.points)
             data.lines = prepared.lines
+            if prepared.a_values is not None:
+                data.point_data["A_deg"] = prepared.a_values
             actor = self.add_polydata(SceneLayer.TOOLPATHS, data, render=False)
             self._toolpath_actors_by_tool.setdefault(prepared.tool_number, []).append(actor)
             visible_for_tool = self._toolpath_visibility_by_tool.setdefault(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rotarycam.tools.models import Tool, ToolType
+from rotarycam.tools.models import Tool, ToolHolder, ToolType
 
 ONE_EIGHTH_INCH_MM = 3.175
 
@@ -55,6 +56,13 @@ class ToolDialog(QDialog):
         self.shank_diameter.setToolTip(
             "Your Makera Z1 bits use a 1/8 inch (3.175 mm) shank; change only if needed."
         )
+        self.assembly_measured = QCheckBox(
+            "Stickout and holder measured for collision validation", self
+        )
+        self.stickout = self._dimension(50.0)
+        self.holder_diameter = self._dimension(20.0)
+        self.holder_length = self._dimension(30.0)
+        self.assembly_measured.toggled.connect(self._update_assembly_fields)
         self.max_stepdown = self._dimension(1.0)
         self.stepover = self._dimension(1.0)
         self.feed = self._dimension(500.0, maximum=100_000.0)
@@ -66,6 +74,7 @@ class ToolDialog(QDialog):
         if tool is not None:
             self._populate(tool)
         self._update_taper_fields()
+        self._update_assembly_fields()
 
         form = QFormLayout()
         form.addRow("Tool number", self.number)
@@ -73,6 +82,10 @@ class ToolDialog(QDialog):
         form.addRow("Bit type", self.tool_type)
         for label, widget in self._dimension_rows():
             form.addRow(label, widget)
+        form.addRow("Collision-safe assembly", self.assembly_measured)
+        form.addRow("Measured stickout (mm)", self.stickout)
+        form.addRow("Holder diameter (mm)", self.holder_diameter)
+        form.addRow("Holder length (mm)", self.holder_length)
         form.addRow("Spindle (rpm)", self.spindle_rpm)
 
         self.validation_label = QLabel(self)
@@ -120,6 +133,13 @@ class ToolDialog(QDialog):
             self.tip_diameter.setValue(tool.tip_diameter)
         if tool.taper_length is not None:
             self.taper_length.setValue(tool.taper_length)
+        complete_assembly = tool.stickout is not None and tool.holder is not None
+        self.assembly_measured.setChecked(complete_assembly)
+        if tool.stickout is not None:
+            self.stickout.setValue(tool.stickout)
+        if tool.holder is not None:
+            self.holder_diameter.setValue(tool.holder.diameter)
+            self.holder_length.setValue(tool.holder.length)
 
     def _dimension(self, value: float, *, maximum: float = 10_000.0) -> QDoubleSpinBox:
         editor = QDoubleSpinBox(self)
@@ -149,6 +169,12 @@ class ToolDialog(QDialog):
         self.tip_diameter.setEnabled(tapered)
         self.taper_length.setEnabled(tapered)
 
+    def _update_assembly_fields(self, _checked: bool = False) -> None:
+        measured = self.assembly_measured.isChecked()
+        self.stickout.setEnabled(measured)
+        self.holder_diameter.setEnabled(measured)
+        self.holder_length.setEnabled(measured)
+
     def tool(self) -> Tool:
         """Build the immutable domain model and run all physical validation."""
 
@@ -156,6 +182,11 @@ class ToolDialog(QDialog):
             selected_type = ToolType(str(self.tool_type.currentData()))
         except ValueError as error:
             raise ValueError("Select a supported bit type.") from error
+        holder = (
+            ToolHolder(self.holder_diameter.value(), self.holder_length.value())
+            if self.assembly_measured.isChecked()
+            else None
+        )
         return Tool(
             number=self.number.value(),
             name=self.name.text().strip(),
@@ -172,6 +203,8 @@ class ToolDialog(QDialog):
             spindle_rpm=self.spindle_rpm.value(),
             tip_diameter=(self.tip_diameter.value() if selected_type is ToolType.TAPERED else None),
             taper_length=(self.taper_length.value() if selected_type is ToolType.TAPERED else None),
+            stickout=(self.stickout.value() if self.assembly_measured.isChecked() else None),
+            holder=holder,
         )
 
     def accept(self) -> None:

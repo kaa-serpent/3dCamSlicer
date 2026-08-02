@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -41,14 +42,18 @@ from rotarycam.geometry.transforms import align_longest_axis_to_x, validate_mesh
 from rotarycam.machine import makera_z1_community_profile
 from rotarycam.machine.library import load_machine_library, save_machine_library
 from rotarycam.stock import Stock
-from rotarycam.supports import CylindricalSupport, RectangularSupport
+from rotarycam.supports import (
+    CylindricalSupport,
+    RectangularSupport,
+    migrate_support_to_retention,
+)
 from rotarycam.tools.library import load_tool_library, save_tool_library
 from rotarycam.tools.models import Tool, ToolType, validate_unique_tool_numbers
 from rotarycam.viewer.machine_library_dialog import MachineLibraryDialog
 from rotarycam.viewer.scene import (
     OperationPolylineData,
     SceneController,
-    prepare_toolpaths,
+    prepare_xyza_passes,
 )
 from rotarycam.viewer.state import ProjectUiState, SceneLayer, SupportPick
 from rotarycam.viewer.stock_dialog import StockDialog
@@ -63,7 +68,9 @@ from rotarycam.viewer.workers import (
 
 if TYPE_CHECKING:
     from rotarycam.engine import RotaryCamEngine
+    from rotarycam.planning.freeform import FreeformPlan, PlannedPass
     from rotarycam.planning.operation import MachiningOperation
+    from rotarycam.simulation import VolumetricSimulationReport
 
 
 @dataclass(slots=True)
@@ -71,6 +78,15 @@ class GeneratedPreview:
     """CAM operations paired with plotter-ready, batched line arrays."""
 
     operations: list[MachiningOperation]
+    preview: list[OperationPolylineData]
+
+
+@dataclass(slots=True)
+class GeneratedXYZAPreview:
+    """Volumetric plan, safety simulation and G54 TCP preview buffers."""
+
+    plan: FreeformPlan
+    simulations: tuple[VolumetricSimulationReport, ...]
     preview: list[OperationPolylineData]
 
 
@@ -128,13 +144,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self.scene = SceneController(self.plotter)
         self.scene.enable_support_picking(self._on_support_pick)
+        self.scene.set_machine(self.active_machine)
 
         self._build_toolbar()
         self._build_panels()
         if engine is not None and engine.mesh is not None:
             self.scene.set_target_mesh(engine.mesh)
         if engine is not None and engine.stock is not None:
-            self.scene.set_stock(engine.stock)
+            self.scene.set_stock(engine.stock, machine=engine.machine)
         if self._tool_library_error:
             self.validation_console.setPlainText(
                 f"Could not load personal bit library: {self._tool_library_error}"
@@ -256,6 +273,7 @@ class MainWindow(QMainWindow):
         self.manage_machines_button = QPushButton("Manage machine profiles...", self)
         self.manage_machines_button.clicked.connect(self.open_machine_library_dialog)
         machine = self._panel(
+            self._visibility_checkbox("Show measured envelopes", SceneLayer.MACHINE),
             self.machine_profile_label,
             self.manage_machines_button,
         )
@@ -354,6 +372,45 @@ class MainWindow(QMainWindow):
         )
 
     def _strategy_panel(self) -> QWidget:
+        from rotarycam.volumetric import VolumetricSettings
+
+        settings = (
+            self.engine.volumetric_settings
+            if self.engine is not None
+            else VolumetricSettings(tolerance=0.05)
+        )
+        self.volume_tolerance = QDoubleSpinBox(self)
+        self.volume_tolerance.setDecimals(4)
+        self.volume_tolerance.setRange(0.001, 10.0)
+        self.volume_tolerance.setSingleStep(0.01)
+        self.volume_tolerance.setSuffix(" mm")
+        self.volume_tolerance.setValue(settings.tolerance)
+        self.volume_memory_budget = QSpinBox(self)
+        self.volume_memory_budget.setRange(1, 65_536)
+        self.volume_memory_budget.setSuffix(" MiB")
+        self.volume_memory_budget.setValue(settings.memory_budget_mib)
+        self.volume_brick_size = QSpinBox(self)
+        self.volume_brick_size.setRange(4, 256)
+        self.volume_brick_size.setValue(settings.brick_size)
+        self.volume_tolerance.editingFinished.connect(self.set_volumetric_settings)
+        self.volume_memory_budget.editingFinished.connect(self.set_volumetric_settings)
+        self.volume_brick_size.editingFinished.connect(self.set_volumetric_settings)
+
+        pipeline = QLabel(
+            "Active v2 pipeline: sparse XYZ volume, continuous X/Y/Z/A planning, "
+            "swept collision checks, volumetric simulation and G93 export.",
+            self,
+        )
+        pipeline.setWordWrap(True)
+        budget_warning = QLabel(
+            "The requested tolerance is never relaxed: planning stops if the exact "
+            "volume exceeds this memory budget.",
+            self,
+        )
+        budget_warning.setWordWrap(True)
+
+        # Kept as non-visible compatibility controls for legacy callers. The v2 UI
+        # generation and export paths never consume the radial pipeline.
         self.finishing_strategy_combo = QComboBox(self)
         self.finishing_strategy_combo.addItem(
             "Helical (simultaneous X/A)", FinishingStrategy.HELICAL
@@ -388,17 +445,35 @@ class MainWindow(QMainWindow):
         )
         self.outer_envelope_checkbox.setChecked(enabled)
         self.outer_envelope_checkbox.toggled.connect(self.set_outer_envelope_mode)
-        warning = QLabel(
-            "Envelope mode is an approximation and does not reproduce recessed geometry.",
-            self,
-        )
-        warning.setWordWrap(True)
         return self._panel(
-            QLabel("Finishing direction", self),
-            self.finishing_strategy_combo,
-            self.outer_envelope_checkbox,
-            warning,
+            pipeline,
+            QLabel("Volume tolerance", self),
+            self.volume_tolerance,
+            QLabel("Hard memory budget", self),
+            self.volume_memory_budget,
+            QLabel("Sparse brick edge", self),
+            self.volume_brick_size,
+            budget_warning,
         )
+
+    def set_volumetric_settings(self) -> None:
+        """Apply exact volumetric accuracy and resource settings to the active engine."""
+
+        if self.engine is not None:
+            from rotarycam.volumetric import VolumetricSettings
+
+            self.engine.configure_volumetric_settings(
+                VolumetricSettings(
+                    tolerance=self.volume_tolerance.value(),
+                    memory_budget_mib=self.volume_memory_budget.value(),
+                    brick_size=self.volume_brick_size.value(),
+                )
+            )
+        self.state.invalidate_derived("Volumetric settings changed")
+        self.validation_console.setPlainText(
+            "Volumetric tolerance or memory budget changed; regenerate the XYZA plan."
+        )
+        self._refresh_actions()
 
     def _refresh_machine_display(self) -> None:
         verification = "verified" if self.active_machine.profile_verified else "unverified"
@@ -411,8 +486,38 @@ class MainWindow(QMainWindow):
             if self.machine_library_path is not None
             else "not linked to a file"
         )
+        missing: list[str] = []
+        machine = self.active_machine
+        if not machine.profile_verified:
+            missing.append("independent profile verification")
+        if machine.y_limits is None:
+            missing.append("measured Y travel")
+        if machine.xyza_configuration is None:
+            missing.append("pivot, A zero, spindle axis and G54 setup")
+        if machine.dynamics is None:
+            missing.append("X/Y/Z/A velocity and acceleration")
+        else:
+            absent_axes = sorted(set("XYZA") - set(machine.dynamics))
+            if absent_axes:
+                missing.append("dynamics for " + "/".join(absent_axes))
+        if machine.capabilities is None or not machine.capabilities.simultaneous_xyza:
+            missing.append("verified simultaneous XYZA capability")
+        if machine.capabilities is None or not machine.capabilities.inverse_time_feed_g93:
+            missing.append("verified controller G93 capability")
+        if machine.assembly is None:
+            missing.append("measured machine/fixture assembly")
+        elif not machine.assembly.is_complete:
+            roles = ", ".join(role.value for role in sorted(
+                machine.assembly.missing_roles, key=lambda role: role.value
+            ))
+            missing.append(f"assembly envelopes: {roles}")
+        safety = (
+            "Export prerequisites complete"
+            if not missing
+            else "Preview only - missing: " + "; ".join(missing)
+        )
         self.machine_profile_label.setText(
-            f"Active: {profile_label}\nLibrary: {library}"
+            f"Active: {profile_label}\nLibrary: {library}\n{safety}"
         )
 
     def open_machine_library_dialog(self) -> None:
@@ -449,12 +554,17 @@ class MainWindow(QMainWindow):
         self.machine_profiles = list(profiles)
         self.active_machine = selected_profile
         if self.engine is not None:
-            self.engine.machine = selected_profile
+            configure_machine = getattr(self.engine, "configure_machine", None)
+            if configure_machine is None:
+                self.engine.machine = selected_profile
+            else:
+                configure_machine(selected_profile)
         if self.state.machine_profile_verified != selected_profile.profile_verified:
             self.state.set_machine_profile_verified(selected_profile.profile_verified)
         elif profile_changed:
             self.state.invalidate_derived("Machine profile changed")
         self._refresh_machine_display()
+        self.scene.set_machine(selected_profile)
         self._refresh_window_title()
         status = "verified" if selected_profile.profile_verified else "unverified"
         self.validation_console.setPlainText(
@@ -534,6 +644,7 @@ class MainWindow(QMainWindow):
 
     def _accept_mesh(self, path: Path, mesh: trimesh.Trimesh) -> None:
         from rotarycam.engine import RotaryCamEngine
+        from rotarycam.volumetric import VolumetricSettings
 
         source_extents = tuple(float(value) for value in mesh.extents)
         source_axis = "XYZ"[source_extents.index(max(source_extents))]
@@ -549,6 +660,13 @@ class MainWindow(QMainWindow):
                 finishing_strategy=self.finishing_strategy_combo.currentData(),
             )
         )
+        engine.configure_volumetric_settings(
+            VolumetricSettings(
+                tolerance=self.volume_tolerance.value(),
+                memory_budget_mib=self.volume_memory_budget.value(),
+                brick_size=self.volume_brick_size.value(),
+            )
+        )
         engine.machine = self.active_machine
         engine.mesh = aligned
         engine.mesh_report = validate_mesh(aligned)
@@ -560,6 +678,7 @@ class MainWindow(QMainWindow):
         self.state.set_stock(None)
         self.state.set_supports([])
         self.scene.set_target_mesh(aligned)
+        self.scene.set_machine(engine.machine)
         self.scene.clear_layer(SceneLayer.STOCK)
         self._refresh_support_list()
         self.mesh_label.setText(path.name)
@@ -599,8 +718,9 @@ class MainWindow(QMainWindow):
         self.state.set_stock(engine.stock)
         self.state.set_supports(engine.supports)
         self.scene.set_target_mesh(engine.mesh)
+        self.scene.set_machine(engine.machine)
         if engine.stock is not None:
-            self.scene.set_stock(engine.stock)
+            self.scene.set_stock(engine.stock, machine=engine.machine)
         mesh_label = self.state.mesh_path.name if self.state.mesh_path else "Project mesh"
         self.mesh_label.setText(mesh_label)
         self.validation_console.setPlainText("Project loaded; ready to generate.")
@@ -610,6 +730,11 @@ class MainWindow(QMainWindow):
         self._refresh_machine_display()
         self._refresh_window_title()
         self._refresh_support_list()
+        self.volume_tolerance.setValue(engine.volumetric_settings.tolerance)
+        self.volume_memory_budget.setValue(
+            engine.volumetric_settings.memory_budget_mib
+        )
+        self.volume_brick_size.setValue(engine.volumetric_settings.brick_size)
         self._refresh_actions()
 
     def set_outer_envelope_mode(self, enabled: bool) -> None:
@@ -680,7 +805,7 @@ class MainWindow(QMainWindow):
             raise ValueError("Stock does not contain the model: " + " ".join(containment.errors))
         self.engine.configure_stock(stock)
         self.state.set_stock(stock)
-        self.scene.set_stock(stock)
+        self.scene.set_stock(stock, machine=self.engine.machine)
         self._refresh_stock_display()
         self.validation_console.setPlainText("Stock updated; generated results invalidated.")
         self._refresh_actions()
@@ -793,9 +918,15 @@ class MainWindow(QMainWindow):
                 f"tip Ø{tool.tip_diameter:g} → Ø{tool.diameter:g} mm "
                 f"over {tool.taper_length:g} mm"
             )
+        assembly = (
+            f"stickout {tool.stickout:g} mm; holder Ø{tool.holder.diameter:g} "
+            f"x {tool.holder.length:g} mm"
+            if tool.stickout is not None and tool.holder is not None
+            else "preview only: stickout/holder missing"
+        )
         return (
             f"T{tool.number} — {tool.name} — {tool.tool_type.value} — {geometry}; "
-            f"shank Ø{tool.shank_diameter:g} mm"
+            f"shank Ø{tool.shank_diameter:g} mm; {assembly}"
         )
 
     def _refresh_tool_library_label(self) -> None:
@@ -876,6 +1007,12 @@ class MainWindow(QMainWindow):
         support = self.state.add_support_pick(point)
         if self.engine is not None and support.definition is not None:
             self.engine.add_support(support.definition)
+            self.engine.set_retention_volumes(
+                [
+                    *self.engine.retention_volumes,
+                    migrate_support_to_retention(support.definition),
+                ]
+            )
         self._refresh_support_list(selected_row=len(self.state.support_picks) - 1)
         self.validation_console.setPlainText("Supports changed; generated results invalidated.")
         self.support_picked.emit(support)
@@ -920,6 +1057,13 @@ class MainWindow(QMainWindow):
         resized = self.state.resize_support_pick(row, self.support_size.value())
         if self.engine is not None and resized.definition is not None:
             self.engine.update_support(resized.definition)
+            replacement = migrate_support_to_retention(resized.definition)
+            self.engine.set_retention_volumes(
+                [
+                    replacement if item.id == replacement.id else item
+                    for item in self.engine.retention_volumes
+                ]
+            )
         self._refresh_support_list(selected_row=row)
         self.validation_console.setPlainText(
             "Support size changed; generated results invalidated."
@@ -935,6 +1079,13 @@ class MainWindow(QMainWindow):
         removed = self.state.remove_support_pick(row)
         if self.engine is not None and removed.definition is not None:
             self.engine.remove_support(removed.definition.id)
+            self.engine.set_retention_volumes(
+                [
+                    item
+                    for item in self.engine.retention_volumes
+                    if item.id != removed.definition.id
+                ]
+            )
         next_row = min(row, len(self.state.support_picks) - 1)
         self._refresh_support_list(selected_row=next_row)
         self.validation_console.setPlainText(
@@ -971,6 +1122,8 @@ class MainWindow(QMainWindow):
             self.export_action.setToolTip("Verify the machine profile before export")
         elif not self.state.has_current_generation:
             self.export_action.setToolTip("Generate current toolpaths before export")
+        elif self.state.validation_errors:
+            self.export_action.setToolTip("Resolve every CNC safety blocker before export")
         else:
             self.export_action.setToolTip("")
 
@@ -1001,38 +1154,34 @@ class MainWindow(QMainWindow):
         worker.signals.finished.connect(lambda: self._finish_generation(worker))
         self.thread_pool.start(worker)
 
-    def _generate_preview(self, report: ProgressReporter) -> GeneratedPreview:
-        """Run domain stages and prepare large preview buffers off the UI thread."""
+    def _generate_preview(self, report: ProgressReporter) -> GeneratedXYZAPreview:
+        """Run the active volumetric XYZA stages away from the Qt render thread."""
 
         if self.engine is None:
             raise RuntimeError("No CAM engine is loaded.")
-        if self.engine.target is None or self.engine.initial_stock is None:
-            report(WorkerProgress(1, 3, "Sampling radial target from the mesh"))
-            self.engine.build_target()
-        else:
-            report(WorkerProgress(1, 3, "Radial target already current; reusing it"))
+        report(WorkerProgress(1, 3, "Building exact sparse XYZ stock and target volumes"))
+        self.engine.build_volumetric_geometry()
         report(
             WorkerProgress(
                 2,
                 3,
-                "Planning tools sequentially from the simulated remaining stock",
+                "Analyzing accessibility and planning continuous X/Y/Z/A passes",
             )
         )
-        operations = self.engine.generate_plan()
-        path_count = sum(len(operation.toolpaths) for operation in operations)
-        point_count = sum(
-            len(path.points)
-            for operation in operations
-            for path in operation.toolpaths
-        )
+        plan = self.engine.generate_xyza_plan()
         report(
             WorkerProgress(
                 3,
                 3,
-                f"Preparing preview: {path_count:,} paths / {point_count:,} points",
+                "Checking swept collisions and simulating true cutter removal",
             )
         )
-        return GeneratedPreview(operations, prepare_toolpaths(operations))
+        simulations = self.engine.simulate_xyza()
+        return GeneratedXYZAPreview(
+            plan,
+            simulations,
+            prepare_xyza_passes(self.engine.timed_passes),
+        )
 
     def _set_generation_busy(self, busy: bool) -> None:
         self._generation_in_progress = busy
@@ -1043,13 +1192,13 @@ class MainWindow(QMainWindow):
             self.scene.clear_layer(SceneLayer.TOOLPATHS)
             self._refresh_toolpath_filters([])
             self.operation_list.clear()
-            self.operation_list.addItem("Working - radial sampling will start next")
+            self.operation_list.addItem("Working - volumetric sampling will start next")
             self.generation_progress.setRange(0, 3)
             self.generation_progress.setValue(0)
             self.generation_phase_label.setText("Starting CAM generation")
             self.validation_console.setPlainText(
                 "Generating... The status bar names the active phase. "
-                "Complex radial sampling and multi-tool simulation can take a minute or more."
+                "Sparse-volume planning and swept simulation can take a minute or more."
             )
             self.statusBar().showMessage("Generating - starting")
         self._refresh_actions()
@@ -1082,8 +1231,127 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Generation failed")
         self._refresh_actions()
 
-    def _accept_generated_preview(self, generated: GeneratedPreview) -> None:
-        self._accept_operations(generated.operations, preview=generated.preview)
+    def _accept_generated_preview(
+        self, generated: GeneratedXYZAPreview | GeneratedPreview
+    ) -> None:
+        if isinstance(generated, GeneratedPreview):
+            self._accept_operations(generated.operations, preview=generated.preview)
+            return
+        if self.engine is None:
+            return
+        self.operation_list.clear()
+        tool_names = {tool.number: tool.name for tool in self.engine.tools}
+        for index, planned_pass in enumerate(generated.plan.passes, start=1):
+            block_count = len(planned_pass.blocks)
+            simultaneous = sum(
+                1
+                for previous, block in zip(
+                    (planned_pass.start_pose, *(item.pose for item in planned_pass.blocks[:-1])),
+                    planned_pass.blocks,
+                    strict=True,
+                )
+                if sum(
+                    left != right
+                    for left, right in zip(
+                        (previous.x, previous.y, previous.z, previous.a),
+                        (block.pose.x, block.pose.y, block.pose.z, block.pose.a),
+                        strict=True,
+                    )
+                )
+                == 4
+            )
+            self.operation_list.addItem(
+                f"Pass {index} - T{planned_pass.tool_number} "
+                f"{tool_names.get(planned_pass.tool_number, '')}\n"
+                f"{planned_pass.kind.value} | {block_count:,} XYZA blocks | "
+                f"{simultaneous:,} simultaneous X/Y/Z/A"
+            )
+        self.scene.set_prepared_toolpaths(generated.preview)
+        if self.engine.volumetric_target is not None:
+            self.scene.set_target_volume(
+                self.engine.volumetric_target,
+                machine=self.engine.machine,
+            )
+        if generated.simulations:
+            from rotarycam.volumetric import SolidVolume
+
+            final_simulation = generated.simulations[-1]
+            residual = SolidVolume.from_dense(
+                final_simulation.final_stock.lattice,
+                final_simulation.residual,
+                brick_size=final_simulation.final_stock.brick_shape[0],
+            )
+            self.scene.set_residual_volume(residual, machine=self.engine.machine)
+        else:
+            self.scene.set_residual_volume(None)
+        if self.engine.machine is not None:
+            self.scene.set_machine(self.engine.machine)
+        self._refresh_xyza_toolpath_filters(generated.plan.passes)
+        validation = self.engine.validate_xyza()
+        critical_errors = self._critical_xyza_errors(validation.errors)
+        self.state.set_validation_errors(critical_errors)
+        self.state.mark_generated()
+        self.state.mark_simulated()
+        accessibility = generated.plan.accessibility
+        accessibility_message = (
+            "All target surface voxels are accessible."
+            if accessibility.complete
+            else (
+                f"Inaccessible residue: {accessibility.residual_voxels} voxel(s), "
+                f"maximum error {accessibility.max_error:.4f} mm, reasons: "
+                + ", ".join(reason.value for reason in accessibility.reasons)
+                + f". Digest: {accessibility.digest}"
+            )
+        )
+        simulation_messages = [
+            issue.message
+            for simulation in generated.simulations
+            for issue in simulation.issues
+        ]
+        messages = [*validation.errors, *simulation_messages, accessibility_message]
+        self.validation_console.setPlainText("\n".join(dict.fromkeys(messages)))
+        self.statusBar().showMessage("Volumetric XYZA generation complete")
+        self._refresh_actions()
+
+    def _critical_xyza_errors(self, errors: tuple[str, ...]) -> tuple[str, ...]:
+        """Keep every blocker except the one explicitly confirmable residue digest."""
+
+        if self.engine is None or self.engine.accessibility_report is None:
+            return errors
+        if self.engine.accessibility_report.complete:
+            return errors
+        expected = (
+            "Inaccessible residue requires --ack-inaccessible "
+            f"{self.engine.accessibility_report.digest}."
+        )
+        return tuple(error for error in errors if error != expected)
+
+    def _refresh_xyza_toolpath_filters(self, passes: tuple[PlannedPass, ...]) -> None:
+        """Build per-tool visibility controls for planned G54 TCP passes."""
+
+        while self.toolpath_filter_layout.count():
+            item = self.toolpath_filter_layout.takeAt(0)
+            widget = None if item is None else item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.toolpath_tool_checkboxes.clear()
+        tool_names = {
+            tool.number: tool.name
+            for tool in (() if self.engine is None else self.engine.tools)
+        }
+        for tool_number in sorted({planned_pass.tool_number for planned_pass in passes}):
+            checkbox = QCheckBox(
+                f"T{tool_number} - {tool_names.get(tool_number, 'configured tool')}",
+                self.toolpath_filter_widget,
+            )
+            checkbox.setChecked(True)
+            checkbox.toggled.connect(
+                lambda visible, number=tool_number: self.scene.set_toolpaths_for_tool_visible(
+                    number, visible
+                )
+            )
+            self.toolpath_filter_layout.addWidget(checkbox)
+            self.toolpath_tool_checkboxes[tool_number] = checkbox
 
     def _accept_operations(
         self,
@@ -1143,24 +1411,64 @@ class MainWindow(QMainWindow):
             self.toolpath_tool_checkboxes[tool_number] = checkbox
 
     def export_current_project(self) -> None:
-        """Ask for a destination and delegate safe export to the engine."""
+        """Confirm only current inaccessible residue and export the validated XYZA plan."""
 
-        if self.engine is None or not self.state.can_export:
-            QMessageBox.warning(self, "Export", "Generate and validate a verified project first.")
+        if (
+            self.engine is None
+            or not self.state.machine_profile_verified
+            or not self.state.has_current_generation
+        ):
+            QMessageBox.warning(
+                self,
+                "Export",
+                "Generate the current XYZA plan with an independently verified profile first.",
+            )
+            return
+        # Never reuse a prior UI acknowledgement; every button press starts clean.
+        self.engine.inaccessible_ack_digest = None
+        validation = self.engine.validate_xyza()
+        critical_errors = self._critical_xyza_errors(validation.errors)
+        if critical_errors:
+            QMessageBox.warning(self, "Export blocked", "\n".join(critical_errors))
             return
         filename, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Makera Z1 CNC",
-            "rotarycam.cnc",
-            "Makera Z1 CNC (*.cnc);;All files (*)",
+            "Export coordinated XYZA G-code",
+            "rotarycam-xyza.nc",
+            "G-code (*.nc *.cnc);;All files (*)",
         )
         if not filename:
             return
+        acknowledgement_digest: str | None = None
+        accessibility = self.engine.accessibility_report
+        if accessibility is not None and not accessibility.complete:
+            reasons = ", ".join(reason.value for reason in accessibility.reasons)
+            response = QMessageBox.question(
+                self,
+                "Confirm inaccessible residue for this export",
+                f"{accessibility.residual_voxels} target surface voxel(s) remain "
+                f"inaccessible (maximum error {accessibility.max_error:.4f} mm; "
+                f"reasons: {reasons}).\n\nDigest: {accessibility.digest}\n\n"
+                "Acknowledge only this inaccessible residue for this export? "
+                "Gouges, collisions, detached stock and other CNC errors cannot be ignored.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if response is not QMessageBox.StandardButton.Yes:
+                self.statusBar().showMessage("XYZA export cancelled; residue not acknowledged")
+                return
+            acknowledgement_digest = accessibility.digest
         try:
-            self.engine.export_gcode(Path(filename))
+            self.engine.export_xyza_gcode(
+                Path(filename),
+                acknowledgement_digest=acknowledgement_digest,
+            )
         except Exception as exc:
             self._show_error(str(exc))
             return
+        finally:
+            # The UI confirmation is deliberately scoped to one export attempt.
+            self.engine.inaccessible_ack_digest = None
         self.statusBar().showMessage(f"Exported {Path(filename).name}")
 
     def closeEvent(self, event: Any) -> None:

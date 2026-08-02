@@ -9,6 +9,13 @@ pytest.importorskip("pytestqt")
 from PySide6.QtWidgets import QDialog
 
 from rotarycam.config import AxisLimits, MachineDefinition, RotaryAxisConfig
+from rotarycam.machine import (
+    AssemblyRole,
+    Box,
+    FrameKind,
+    MachineAssembly,
+    MachineCapabilities,
+)
 from rotarycam.viewer.machine_dialog import MachineDialog
 
 
@@ -87,3 +94,89 @@ def test_dialog_keeps_invalid_axis_range_open(qtbot: object) -> None:
 
     assert dialog.result() == QDialog.DialogCode.Rejected
     assert "axis maximum must be greater" in dialog.validation_label.text()
+
+
+def test_dialog_collects_xyza_setup_dynamics_and_controller_capabilities(
+    qtbot: object,
+) -> None:
+    dialog = MachineDialog()
+    qtbot.addWidget(dialog)  # type: ignore[attr-defined]
+    dialog.xyza_measured.setChecked(True)
+    dialog.y_minimum.setValue(-40.0)
+    dialog.y_maximum.setValue(60.0)
+    dialog.rotary_pivot_y.setValue(12.0)
+    dialog.rotary_pivot_z.setValue(34.0)
+    dialog.rotary_zero.setValue(5.0)
+    dialog.g54_x.setValue(1.0)
+    dialog.g54_y.setValue(2.0)
+    dialog.g54_z.setValue(3.0)
+    dialog.dynamics_measured.setChecked(True)
+    dialog.axis_dynamics["A"][0].setValue(3_600.0)
+    dialog.axis_dynamics["A"][1].setValue(240.0)
+    dialog.simultaneous_xyza.setChecked(True)
+    dialog.inverse_time_g93.setChecked(True)
+
+    profile = dialog.machine()
+
+    assert profile.profile_verified is False
+    assert profile.y_limits == AxisLimits(minimum=-40.0, maximum=60.0)
+    assert profile.xyza_configuration is not None
+    assert profile.xyza_configuration.rotary_pivot_y == pytest.approx(12.0)
+    assert profile.xyza_configuration.g54_origin == pytest.approx((1.0, 2.0, 3.0))
+    assert profile.dynamics is not None
+    assert profile.dynamics["A"].max_velocity == pytest.approx(3_600.0)
+    assert profile.dynamics["A"].max_acceleration == pytest.approx(240.0)
+    assert profile.capabilities == MachineCapabilities(
+        simultaneous_xyza=True,
+        inverse_time_feed_g93=True,
+    )
+
+
+def test_unknown_xyza_measurements_remain_explicitly_unset(qtbot: object) -> None:
+    dialog = MachineDialog()
+    qtbot.addWidget(dialog)  # type: ignore[attr-defined]
+
+    profile = dialog.machine()
+
+    assert dialog.y_minimum.isEnabled() is False
+    assert dialog.axis_dynamics["X"][0].isEnabled() is False
+    assert profile.y_limits is None
+    assert profile.xyza_configuration is None
+    assert profile.dynamics is None
+    assert profile.capabilities is None
+
+
+def test_dialog_validates_and_persists_measured_assembly_json(qtbot: object) -> None:
+    assembly = MachineAssembly(
+        primitives=tuple(
+            Box(
+                role=role,
+                frame=FrameKind.FIXED,
+                center=(float(index), 0.0, 0.0),
+                size=(1.0, 1.0, 1.0),
+            )
+            for index, role in enumerate(
+                (
+                    AssemblyRole.CHUCK,
+                    AssemblyRole.JAWS,
+                    AssemblyRole.TAILSTOCK,
+                    AssemblyRole.PLATTER,
+                    AssemblyRole.SPINDLE,
+                    AssemblyRole.SUPPORT,
+                )
+            )
+        )
+    )
+    dialog = MachineDialog()
+    qtbot.addWidget(dialog)  # type: ignore[attr-defined]
+    dialog.assembly_json.setPlainText(assembly.model_dump_json())
+
+    profile = dialog.machine()
+
+    assert profile.profile_verified is False
+    assert profile.machine_assembly_configured is True
+    assert profile.assembly == assembly
+
+    dialog.assembly_json.setPlainText("not json")
+    with pytest.raises(ValueError, match="Invalid measured assembly JSON"):
+        dialog.machine()
