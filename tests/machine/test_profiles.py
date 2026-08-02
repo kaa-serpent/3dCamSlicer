@@ -16,12 +16,65 @@ def test_makera_z1_community_profile_records_declared_reference_limits() -> None
     assert (machine.z_limits.minimum, machine.z_limits.maximum) == (0.0, 100.0)
     assert machine.max_spindle_rpm == 13_000
     assert machine.spindle_power_w == 150.0
-    assert machine.max_linear_speed_mm_min == 1_200.0
+    assert machine.max_linear_speed_mm_min == 2_000.0
     assert machine.max_rotary_stock_length == 150.0
     assert machine.max_rotary_stock_radius == 40.0
     assert machine.safe_radius == 45.0
     assert machine.coordinate_precision == 3
     assert machine.program_header == ("G54",)
+    assert machine.observations is not None
+    assert machine.observations.controller_firmware == "1.0.4Beta5"
+    assert machine.observations.controller_config is not None
+    assert machine.observations.controller_config.source_name == "config.txt"
+    assert machine.observations.controller_config.source_sha256 == (
+        "7B2DA495BAEF31D18AF484D2FAB363C03FA4562377159EF89F8DC81855A9F0C1"
+    )
+    assert machine.observations.controller_config.work_area_xy_mm == pytest.approx(
+        (200.0, 200.0)
+    )
+    assert machine.observations.controller_config.default_seek_rate_mm_min == 2_000.0
+    assert machine.observations.controller_config.soft_limits_mcs.enabled is True
+    assert machine.observations.controller_config.soft_limits_mcs.minimum_mm == pytest.approx(
+        (-210.0, -212.0, -105.0)
+    )
+    assert machine.observations.controller_config.anchor1_mcs_xy_mm == pytest.approx(
+        (-191.55, -193.639)
+    )
+    assert machine.observations.controller_config.rotation_offsets_config == pytest.approx(
+        (-7.5, 69.0, 23.0)
+    )
+    assert machine.observations.installed_firmware_image is not None
+    assert machine.observations.installed_firmware_image.version == "1.0.4Beta2"
+    assert machine.observations.installed_firmware_image.build == "Sep 16 2025 10:53:01"
+    assert machine.observations.installed_firmware_image.source_sha256 == (
+        "3608C6FBDB6C568A7098464C9DDAC8129469853EA44B8C75A18F766074C99515"
+    )
+    assert machine.observations.home_display_position_mm == pytest.approx(
+        (190.550, 192.639, 69.343)
+    )
+    assert machine.observations.rotary_mount_display_xy_mm == pytest.approx((60.0, 69.0))
+    assert machine.observations.coordinate_display_decimals == 3
+    assert machine.observations.unresolved_rotary_direction_report == "A CW = Y+"
+
+
+def test_makera_observations_do_not_complete_xyza_or_enable_export() -> None:
+    machine = makera_z1_community_profile()
+
+    assert machine.profile_verified is False
+    assert machine.y_limits is None
+    assert machine.xyza_configuration is None
+    assert machine.dynamics is not None
+    assert {
+        axis: (limits.max_velocity, limits.max_acceleration)
+        for axis, limits in machine.dynamics.items()
+    } == {
+        "X": (2_000.0, 150.0),
+        "Y": (2_000.0, 150.0),
+        "Z": (1_000.0, 150.0),
+        "A": (1_800.0, 360.0),
+    }
+    assert machine.capabilities is None
+    assert machine.assembly is None
 
 
 def test_makera_z1_community_profile_uses_continuous_positive_a_about_x() -> None:
@@ -32,19 +85,59 @@ def test_makera_z1_community_profile_uses_continuous_positive_a_about_x() -> Non
     assert rotary.degrees_per_revolution == 360.0
     assert rotary.allow_unbounded_angles is True
     assert rotary.reset_between_operations is False
-    assert rotary.max_speed_deg_per_min == 3_600.0
+    assert rotary.max_speed_deg_per_min == 1_800.0
     assert rotary.positioning_precision_deg == 0.1
     assert rotary.drive_system == "belt drive"
     assert rotary.motor == "NEMA 17 stepper motor"
 
 
 def test_makera_z1_capabilities_are_json_serializable() -> None:
-    payload = makera_z1_community_profile().model_dump(mode="json")
+    machine = makera_z1_community_profile()
+    payload = machine.model_dump(mode="json")
 
     assert payload["spindle_power_w"] == 150.0
-    assert payload["max_linear_speed_mm_min"] == 1_200.0
-    assert payload["rotary_axis"]["max_speed_deg_per_min"] == 3_600.0
+    assert payload["max_linear_speed_mm_min"] == 2_000.0
+    assert payload["rotary_axis"]["max_speed_deg_per_min"] == 1_800.0
     assert payload["rotary_axis"]["positioning_precision_deg"] == 0.1
+    assert payload["observations"] == {
+        "controller_firmware": "1.0.4Beta5",
+        "controller_config": {
+            "source_name": "config.txt",
+            "source_sha256": (
+                "7B2DA495BAEF31D18AF484D2FAB363C03"
+                "FA4562377159EF89F8DC81855A9F0C1"
+            ),
+            "work_area_xy_mm": [200.0, 200.0],
+            "default_seek_rate_mm_min": 2000.0,
+            "soft_limits_mcs": {
+                "enabled": True,
+                "minimum_mm": [-210.0, -212.0, -105.0],
+            },
+            "anchor1_mcs_xy_mm": [-191.55, -193.639],
+            "rotation_offsets_config": [-7.5, 69.0, 23.0],
+        },
+        "installed_firmware_image": {
+            "source_name": "FIRMWARE.CUR",
+            "version": "1.0.4Beta2",
+            "build": "Sep 16 2025 10:53:01",
+            "source_sha256": (
+                "3608C6FBDB6C568A7098464C9DDAC812"
+                "9469853EA44B8C75A18F766074C99515"
+            ),
+        },
+        "home_display_position_mm": [190.55, 192.639, 69.343],
+        "rotary_mount_display_xy_mm": [60.0, 69.0],
+        "coordinate_display_decimals": 3,
+        "unresolved_rotary_direction_report": "A CW = Y+",
+    }
+    restored = MachineDefinition.model_validate_json(machine.model_dump_json())
+    assert restored == machine
+    assert restored.observations is not None
+    assert restored.observations.installed_firmware_image is not None
+    assert (
+        restored.observations.controller_firmware
+        != restored.observations.installed_firmware_image.version
+    )
 
 
 @pytest.mark.parametrize("value", [0.0, -1.0, float("nan"), float("inf")])

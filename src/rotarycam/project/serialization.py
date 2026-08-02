@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from typing import Any
 
-from rotarycam.project.schema import RotaryCamProject
+from rotarycam.persistence import atomic_write_text, preserve_v1_source
+from rotarycam.project.schema import (
+    PROJECT_SCHEMA_VERSION,
+    RotaryCamProject,
+    RotaryCamProjectV1,
+    migrate_project_v1,
+)
 
 
 def _relative_mesh_path(mesh_path: Path, project_directory: Path) -> Path:
@@ -34,19 +42,34 @@ def save_project(
             destination.parent,
         )
     persisted = project.model_copy(update={"mesh_path": stored_mesh_path})
-    destination.write_text(
+    if project._migrated_v1_source is not None:
+        preserve_v1_source(project._migrated_v1_source)
+    atomic_write_text(
+        destination,
         persisted.model_dump_json(by_alias=True, indent=2) + "\n",
-        encoding="utf-8",
     )
+    project._migrated_v1_source = None
 
 
 def load_project(path: Path) -> RotaryCamProject:
     """Parse a project and resolve a relative mesh path against its directory."""
 
     source = path.resolve()
-    project = RotaryCamProject.model_validate_json(source.read_text(encoding="utf-8"))
+    raw: Any = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("project document must be a JSON object")
+    version = raw.get("schema_version")
+    if version == 1:
+        project = migrate_project_v1(RotaryCamProjectV1.model_validate(raw))
+        project._migrated_v1_source = source
+    elif version == PROJECT_SCHEMA_VERSION:
+        project = RotaryCamProject.model_validate(raw)
+    else:
+        raise ValueError(f"unsupported project schema_version: {version!r}")
     if project.mesh_path.is_absolute():
         return project
-    return project.model_copy(
+    resolved = project.model_copy(
         update={"mesh_path": (source.parent / project.mesh_path).resolve()},
     )
+    resolved._migrated_v1_source = project._migrated_v1_source
+    return resolved

@@ -1,6 +1,15 @@
 """Bundled machine profiles derived from inspectable reference material."""
 
-from rotarycam.config import AxisLimits, MachineDefinition, RotaryAxisConfig
+from rotarycam.config import (
+    AxisLimits,
+    ControllerConfigSnapshot,
+    FirmwareImageSnapshot,
+    MachineCoordinateSoftLimits,
+    MachineDefinition,
+    MachineObservationMetadata,
+    RotaryAxisConfig,
+)
+from rotarycam.machine.assemblies import AxisDynamics
 
 
 def makera_z1_community_profile() -> MachineDefinition:
@@ -24,19 +33,56 @@ def makera_z1_community_profile() -> MachineDefinition:
             degrees_per_revolution=360.0,
             allow_unbounded_angles=True,
             reset_between_operations=False,
-            max_speed_deg_per_min=3_600.0,
+            max_speed_deg_per_min=1_800.0,
             positioning_precision_deg=0.1,
             drive_system="belt drive",
             motor="NEMA 17 stepper motor",
         ),
         max_spindle_rpm=13_000,
         spindle_power_w=150.0,
-        max_linear_speed_mm_min=1_200.0,
+        dynamics={
+            "X": AxisDynamics(max_velocity=2_000.0, max_acceleration=150.0),
+            "Y": AxisDynamics(max_velocity=2_000.0, max_acceleration=150.0),
+            "Z": AxisDynamics(max_velocity=1_000.0, max_acceleration=150.0),
+            "A": AxisDynamics(max_velocity=1_800.0, max_acceleration=360.0),
+        },
+        max_linear_speed_mm_min=2_000.0,
         safe_radius=45.0,
         max_rotary_stock_length=150.0,
         max_rotary_stock_radius=40.0,
         coordinate_precision=3,
         program_header=("G54",),
+        observations=MachineObservationMetadata(
+            controller_firmware="1.0.4Beta5",
+            controller_config=ControllerConfigSnapshot(
+                source_name="config.txt",
+                source_sha256=(
+                    "7B2DA495BAEF31D18AF484D2FAB363C03"
+                    "FA4562377159EF89F8DC81855A9F0C1"
+                ),
+                work_area_xy_mm=(200.0, 200.0),
+                default_seek_rate_mm_min=2_000.0,
+                soft_limits_mcs=MachineCoordinateSoftLimits(
+                    enabled=True,
+                    minimum_mm=(-210.0, -212.0, -105.0),
+                ),
+                anchor1_mcs_xy_mm=(-191.55, -193.639),
+                rotation_offsets_config=(-7.5, 69.0, 23.0),
+            ),
+            installed_firmware_image=FirmwareImageSnapshot(
+                source_name="FIRMWARE.CUR",
+                version="1.0.4Beta2",
+                build="Sep 16 2025 10:53:01",
+                source_sha256=(
+                    "3608C6FBDB6C568A7098464C9DDAC812"
+                    "9469853EA44B8C75A18F766074C99515"
+                ),
+            ),
+            home_display_position_mm=(190.550, 192.639, 69.343),
+            rotary_mount_display_xy_mm=(60.0, 69.0),
+            coordinate_display_decimals=3,
+            unresolved_rotary_direction_report="A CW = Y+",
+        ),
     )
 
 

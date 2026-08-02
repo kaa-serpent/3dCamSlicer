@@ -15,7 +15,7 @@ pytest.importorskip("pyvista")
 pytest.importorskip("pyvistaqt")
 pytest.importorskip("pytestqt")
 
-from PySide6.QtWidgets import QDockWidget, QWidget
+from PySide6.QtWidgets import QDockWidget, QMessageBox, QWidget
 
 from rotarycam.config import FinishingStrategy, RadialSamplingMode
 from rotarycam.gui import create_main_window
@@ -25,6 +25,7 @@ from rotarycam.stock import CylindricalStock, RectangularStock
 from rotarycam.toolpath.models import Toolpath, ToolpathPoint
 from rotarycam.tools.models import Tool, ToolType
 from rotarycam.viewer.state import SceneLayer
+from rotarycam.viewer.window import GeneratedXYZAPreview
 from rotarycam.viewer.workers import WorkerProgress
 
 
@@ -162,6 +163,82 @@ def test_generation_busy_state_is_visible_and_blocks_duplicate_generation(
     assert window.generate_action.isEnabled() is True
 
 
+def test_generation_uses_only_active_volumetric_xyza_pipeline(qtbot: object) -> None:
+    calls: list[str] = []
+
+    class XYZAOnlyEngine:
+        timed_passes: tuple[Any, ...] = ()
+
+        def build_volumetric_geometry(self) -> None:
+            calls.append("volume")
+
+        def generate_xyza_plan(self) -> SimpleNamespace:
+            calls.append("plan_xyza")
+            return SimpleNamespace(passes=())
+
+        def simulate_xyza(self) -> tuple[Any, ...]:
+            calls.append("simulate_xyza")
+            return ()
+
+    window = window_with_fake_plotter()
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    window.engine = XYZAOnlyEngine()
+    phases: list[WorkerProgress] = []
+
+    window._generate_preview(phases.append)
+
+    assert calls == ["volume", "plan_xyza", "simulate_xyza"]
+    assert [phase.step for phase in phases] == [1, 2, 3]
+    assert "X/Y/Z/A" in phases[1].message
+
+
+def test_accepting_xyza_preview_marks_simulation_current_and_exposes_ack_export(
+    qtbot: object,
+) -> None:
+    digest = "c" * 64
+    accessibility = SimpleNamespace(
+        complete=False,
+        residual_voxels=3,
+        max_error=0.2,
+        reasons=(SimpleNamespace(value="occluded"),),
+        digest=digest,
+    )
+
+    class PreviewEngine:
+        mesh = trimesh.creation.box()
+        stock = None
+        tools: tuple[Tool, ...] = ()
+        volumetric_target = None
+        machine = None
+        accessibility_report = accessibility
+
+        def validate_xyza(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                errors=(
+                    f"Inaccessible residue requires --ack-inaccessible {digest}.",
+                )
+            )
+
+    window = window_with_fake_plotter()
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    window.engine = PreviewEngine()
+    window.state.mesh = window.engine.mesh
+    window.state.machine_profile_verified = True
+    generated = GeneratedXYZAPreview(
+        SimpleNamespace(passes=(), accessibility=accessibility),
+        (),
+        [],
+    )
+
+    window._accept_generated_preview(generated)
+
+    assert window.state.has_current_generation
+    assert window.state.simulation_revision == window.state.revision
+    assert window.state.validation_errors == ()
+    assert window.export_action.isEnabled()
+    assert digest in window.validation_console.toPlainText()
+
+
 def test_operation_summary_and_preview_use_one_actor_per_operation(qtbot: object) -> None:
     window = window_with_fake_plotter()
     qtbot.addWidget(window)  # type: ignore[attr-defined]
@@ -224,6 +301,25 @@ def test_synchronous_mesh_load_updates_scene_and_keeps_export_safe(
     assert window.export_action.isEnabled() is False
 
 
+def test_raw_mesh_import_keeps_selected_volumetric_resource_settings(
+    qtbot: object, tmp_path: Path
+) -> None:
+    mesh_path = tmp_path / "part.stl"
+    trimesh.creation.box(extents=(2.0, 2.0, 2.0)).export(mesh_path)
+    window = window_with_fake_plotter()
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    window.volume_tolerance.setValue(0.125)
+    window.volume_memory_budget.setValue(256)
+    window.volume_brick_size.setValue(16)
+
+    window.load_mesh_file(mesh_path, asynchronous=False)
+
+    assert window.engine is not None
+    assert window.engine.volumetric_settings.tolerance == pytest.approx(0.125)
+    assert window.engine.volumetric_settings.memory_budget_mib == 256
+    assert window.engine.volumetric_settings.brick_size == 16
+
+
 def test_support_pick_displays_x_and_a_and_invalidates(qtbot: object) -> None:
     window = window_with_fake_plotter()
     qtbot.addWidget(window)  # type: ignore[attr-defined]
@@ -236,10 +332,17 @@ def test_support_pick_displays_x_and_a_and_invalidates(qtbot: object) -> None:
     assert window.export_action.isEnabled() is False
 
 
-def test_selected_support_can_be_resized_and_removed(qtbot: object) -> None:
+def test_selected_support_can_be_resized_and_removed(
+    qtbot: object, tmp_path: Path
+) -> None:
     window = window_with_fake_plotter()
     qtbot.addWidget(window)  # type: ignore[attr-defined]
+    mesh_path = tmp_path / "part.stl"
+    trimesh.creation.box(extents=(10.0, 10.0, 10.0)).export(mesh_path)
+    window.load_mesh_file(mesh_path, asynchronous=False)
     window._on_support_pick((4.0, 0.0, 2.0))
+    assert window.engine is not None
+    assert len(window.engine.retention_volumes) == 1
 
     window.support_size.setValue(8.0)
     window.resize_selected_support()
@@ -247,6 +350,8 @@ def test_selected_support_can_be_resized_and_removed(qtbot: object) -> None:
     assert window.state.support_picks[0].size_mm == pytest.approx(8.0)
     assert window.support_list.item(0).text().endswith("Ø 8.000 mm")
     assert "size changed" in window.validation_console.toPlainText()
+    assert window.engine is not None
+    assert window.engine.retention_volumes[0].diameter == pytest.approx(8.0)
 
     window.remove_support_button.click()
 
@@ -255,6 +360,7 @@ def test_selected_support_can_be_resized_and_removed(qtbot: object) -> None:
     assert window.support_size.isEnabled() is False
     assert window.remove_support_button.isEnabled() is False
     assert "removed" in window.validation_console.toPlainText()
+    assert window.engine.retention_volumes == []
 
 
 def test_add_bit_updates_tool_library_and_rejects_duplicate_number(qtbot: object) -> None:
@@ -521,7 +627,7 @@ def test_operation_toolpaths_can_be_shown_independently_by_tool(qtbot: object) -
     assert second_actor.visible is True
 
 
-def test_export_dialog_defaults_to_cnc_but_preserves_alternate_path(
+def test_xyza_export_dialog_preserves_alternate_path(
     qtbot: object,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -536,8 +642,16 @@ def test_export_dialog_defaults_to_cnc_but_preserves_alternate_path(
 
     class RecordingEngine:
         exported_path: Path | None = None
+        accessibility_report = SimpleNamespace(complete=True)
+        inaccessible_ack_digest: str | None = None
 
-        def export_gcode(self, path: Path) -> None:
+        def validate_xyza(self) -> SimpleNamespace:
+            return SimpleNamespace(errors=())
+
+        def export_xyza_gcode(
+            self, path: Path, *, acknowledgement_digest: str | None = None
+        ) -> None:
+            assert acknowledgement_digest is None
             self.exported_path = path
 
     window = window_with_fake_plotter()
@@ -555,8 +669,122 @@ def test_export_dialog_defaults_to_cnc_but_preserves_alternate_path(
     window.export_current_project()
 
     assert dialog_arguments == (
-        "Export Makera Z1 CNC",
-        "rotarycam.cnc",
-        "Makera Z1 CNC (*.cnc);;All files (*)",
+        "Export coordinated XYZA G-code",
+        "rotarycam-xyza.nc",
+        "G-code (*.nc *.cnc);;All files (*)",
     )
     assert engine.exported_path == selected_path
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_inaccessible_digest_confirmation_is_scoped_to_one_export(
+    qtbot: object,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    accepted: bool,
+) -> None:
+    digest = "a" * 64
+    selected_path = tmp_path / "confirmed.nc"
+
+    class RecordingEngine:
+        accessibility_report = SimpleNamespace(
+            complete=False,
+            residual_voxels=7,
+            max_error=0.125,
+            reasons=(SimpleNamespace(value="occluded"),),
+            digest=digest,
+        )
+        inaccessible_ack_digest: str | None = "old-value"
+        exported_digest: str | None = None
+
+        def validate_xyza(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                errors=(
+                    f"Inaccessible residue requires --ack-inaccessible {digest}.",
+                )
+            )
+
+        def export_xyza_gcode(
+            self, _path: Path, *, acknowledgement_digest: str | None = None
+        ) -> None:
+            self.exported_digest = acknowledgement_digest
+            self.inaccessible_ack_digest = acknowledgement_digest
+
+    window = window_with_fake_plotter()
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    engine = RecordingEngine()
+    window.engine = engine
+    window.state.machine_profile_verified = True
+    window.state.generated_revision = window.state.revision
+    monkeypatch.setattr(
+        "rotarycam.viewer.window.QFileDialog.getSaveFileName",
+        lambda *_args: (str(selected_path), "G-code (*.nc *.cnc)"),
+    )
+    monkeypatch.setattr(
+        "rotarycam.viewer.window.QMessageBox.question",
+        lambda *_args: (
+            QMessageBox.StandardButton.Yes
+            if accepted
+            else QMessageBox.StandardButton.No
+        ),
+    )
+
+    window.export_current_project()
+
+    assert engine.exported_digest == (digest if accepted else None)
+    assert engine.inaccessible_ack_digest is None
+
+
+def test_stale_inaccessible_digest_is_reported_and_not_reused(
+    qtbot: object,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    digest = "b" * 64
+
+    class StaleEngine:
+        mesh = None
+        stock = None
+        tools: tuple[Tool, ...] = ()
+        accessibility_report = SimpleNamespace(
+            complete=False,
+            residual_voxels=1,
+            max_error=0.25,
+            reasons=(SimpleNamespace(value="travel"),),
+            digest=digest,
+        )
+        inaccessible_ack_digest: str | None = None
+
+        def validate_xyza(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                errors=(
+                    f"Inaccessible residue requires --ack-inaccessible {digest}.",
+                )
+            )
+
+        def export_xyza_gcode(
+            self, _path: Path, *, acknowledgement_digest: str | None = None
+        ) -> None:
+            assert acknowledgement_digest == digest
+            self.inaccessible_ack_digest = acknowledgement_digest
+            raise ValueError("Accessibility evidence is stale for the current plan.")
+
+    window = window_with_fake_plotter()
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    engine = StaleEngine()
+    window.engine = engine
+    window.state.machine_profile_verified = True
+    window.state.generated_revision = window.state.revision
+    monkeypatch.setattr(
+        "rotarycam.viewer.window.QFileDialog.getSaveFileName",
+        lambda *_args: (str(tmp_path / "stale.nc"), "G-code (*.nc *.cnc)"),
+    )
+    monkeypatch.setattr(
+        "rotarycam.viewer.window.QMessageBox.question",
+        lambda *_args: QMessageBox.StandardButton.Yes,
+    )
+
+    window.export_current_project()
+
+    assert "evidence is stale" in window.validation_console.toPlainText()
+    assert engine.inaccessible_ack_digest is None

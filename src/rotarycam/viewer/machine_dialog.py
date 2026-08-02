@@ -19,7 +19,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rotarycam.config import AxisLimits, MachineDefinition, RotaryAxisConfig
+from rotarycam.config import (
+    AxisLimits,
+    MachineDefinition,
+    RotaryAxisConfig,
+    XYZAConfiguration,
+    identity_transform,
+)
+from rotarycam.machine import AxisDynamics, MachineAssembly, MachineCapabilities
 
 
 class MachineDialog(QDialog):
@@ -38,12 +45,26 @@ class MachineDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Add machine profile" if machine is None else "Edit machine profile")
         self.setModal(True)
+        self._source_machine = machine
 
         self.name = QLineEdit(machine.name if machine is not None else "New machine", self)
         self.x_minimum = self._number(-100_000.0, 100_000.0, 0.0)
         self.x_maximum = self._number(-100_000.0, 100_000.0, 200.0)
         self.z_minimum = self._number(-100_000.0, 100_000.0, 0.0)
         self.z_maximum = self._number(-100_000.0, 100_000.0, 100.0)
+        self.xyza_measured = QCheckBox("Y travel and XYZA setup were measured", self)
+        self.y_minimum = self._number(-100_000.0, 100_000.0, -100.0)
+        self.y_maximum = self._number(-100_000.0, 100_000.0, 100.0)
+        self.rotary_pivot_y = self._number(-100_000.0, 100_000.0, 0.0)
+        self.rotary_pivot_z = self._number(-100_000.0, 100_000.0, 0.0)
+        self.rotary_zero = self._number(-1_000_000.0, 1_000_000.0, 0.0)
+        self.spindle_axis_x = self._number(-1.0, 1.0, 0.0, decimals=6)
+        self.spindle_axis_y = self._number(-1.0, 1.0, 0.0, decimals=6)
+        self.spindle_axis_z = self._number(-1.0, 1.0, -1.0, decimals=6)
+        self.g54_x = self._number(-100_000.0, 100_000.0, 0.0)
+        self.g54_y = self._number(-100_000.0, 100_000.0, 0.0)
+        self.g54_z = self._number(-100_000.0, 100_000.0, 0.0)
+        self.xyza_measured.toggled.connect(self._update_xyza_fields)
 
         self.axis_letter = QLineEdit("A", self)
         self.axis_letter.setMaxLength(1)
@@ -58,6 +79,26 @@ class MachineDialog(QDialog):
         self.positioning_precision = self._optional_number(maximum=360.0, decimals=6)
         self.drive_system = QLineEdit(self)
         self.motor = QLineEdit(self)
+
+        self.dynamics_measured = QCheckBox("X/Y/Z/A dynamics were measured", self)
+        self.axis_dynamics: dict[str, tuple[QDoubleSpinBox, QDoubleSpinBox]] = {}
+        for axis in "XYZA":
+            velocity = self._positive_number(1_200.0, maximum=10_000_000.0)
+            acceleration = self._positive_number(100.0, maximum=10_000_000.0)
+            self.axis_dynamics[axis] = (velocity, acceleration)
+        self.dynamics_measured.toggled.connect(self._update_dynamics_fields)
+        self.simultaneous_xyza = QCheckBox(
+            "Controller support for simultaneous X/Y/Z/A is verified", self
+        )
+        self.inverse_time_g93 = QCheckBox(
+            "Controller support for inverse-time G93 is verified", self
+        )
+        self.assembly_json = QPlainTextEdit(self)
+        self.assembly_json.setPlaceholderText(
+            '{"primitives":[{"primitive_type":"box","role":"chuck",'
+            '"frame":"rotary","center":[0,0,0],"size":[1,1,1]}]}'
+        )
+        self.assembly_json.setMaximumHeight(150)
 
         self.max_spindle_rpm = self._optional_integer(maximum=1_000_000)
         self.spindle_power = self._optional_number(maximum=10_000_000.0)
@@ -77,6 +118,8 @@ class MachineDialog(QDialog):
 
         if machine is not None:
             self._load_machine(machine)
+        self._update_xyza_fields()
+        self._update_dynamics_fields()
 
         form = QFormLayout()
         for label, widget in self._rows():
@@ -114,6 +157,18 @@ class MachineDialog(QDialog):
             ("X maximum (mm)", self.x_maximum),
             ("Radial Z minimum (mm)", self.z_minimum),
             ("Radial Z maximum (mm)", self.z_maximum),
+            ("Measured XYZA setup", self.xyza_measured),
+            ("Y minimum (mm)", self.y_minimum),
+            ("Y maximum (mm)", self.y_maximum),
+            ("Rotary pivot Y in G54 (mm)", self.rotary_pivot_y),
+            ("Rotary pivot Z in G54 (mm)", self.rotary_pivot_z),
+            ("Mechanical A zero (deg)", self.rotary_zero),
+            ("Spindle axis X", self.spindle_axis_x),
+            ("Spindle axis Y", self.spindle_axis_y),
+            ("Spindle axis Z", self.spindle_axis_z),
+            ("G54 origin X (mm)", self.g54_x),
+            ("G54 origin Y (mm)", self.g54_y),
+            ("G54 origin Z (mm)", self.g54_z),
             ("Rotary axis letter", self.axis_letter),
             ("Rotary direction", self.rotary_direction),
             ("Degrees per revolution", self.degrees_per_revolution),
@@ -123,6 +178,18 @@ class MachineDialog(QDialog):
             ("A positioning precision (deg)", self.positioning_precision),
             ("Rotary drive system", self.drive_system),
             ("Rotary motor", self.motor),
+            ("Measured axis dynamics", self.dynamics_measured),
+            ("X maximum velocity (mm/min)", self.axis_dynamics["X"][0]),
+            ("X maximum acceleration (mm/s2)", self.axis_dynamics["X"][1]),
+            ("Y maximum velocity (mm/min)", self.axis_dynamics["Y"][0]),
+            ("Y maximum acceleration (mm/s2)", self.axis_dynamics["Y"][1]),
+            ("Z maximum velocity (mm/min)", self.axis_dynamics["Z"][0]),
+            ("Z maximum acceleration (mm/s2)", self.axis_dynamics["Z"][1]),
+            ("A maximum velocity (deg/min)", self.axis_dynamics["A"][0]),
+            ("A maximum acceleration (deg/s2)", self.axis_dynamics["A"][1]),
+            ("Simultaneous XYZA capability", self.simultaneous_xyza),
+            ("Inverse-time G93 capability", self.inverse_time_g93),
+            ("Measured assembly primitives (JSON)", self.assembly_json),
             ("Maximum spindle speed (rpm)", self.max_spindle_rpm),
             ("Spindle power (W)", self.spindle_power),
             ("Maximum linear speed (mm/min)", self.max_linear_speed),
@@ -186,6 +253,20 @@ class MachineDialog(QDialog):
         self.x_maximum.setValue(machine.x_limits.maximum)
         self.z_minimum.setValue(machine.z_limits.minimum)
         self.z_maximum.setValue(machine.z_limits.maximum)
+        if machine.y_limits is not None and machine.xyza_configuration is not None:
+            self.xyza_measured.setChecked(True)
+            self.y_minimum.setValue(machine.y_limits.minimum)
+            self.y_maximum.setValue(machine.y_limits.maximum)
+            configuration = machine.xyza_configuration
+            self.rotary_pivot_y.setValue(configuration.rotary_pivot_y)
+            self.rotary_pivot_z.setValue(configuration.rotary_pivot_z)
+            self.rotary_zero.setValue(configuration.rotary_zero_deg)
+            self.spindle_axis_x.setValue(configuration.spindle_axis[0])
+            self.spindle_axis_y.setValue(configuration.spindle_axis[1])
+            self.spindle_axis_z.setValue(configuration.spindle_axis[2])
+            self.g54_x.setValue(configuration.g54_origin[0])
+            self.g54_y.setValue(configuration.g54_origin[1])
+            self.g54_z.setValue(configuration.g54_origin[2])
         rotary = machine.rotary_axis
         self.axis_letter.setText(rotary.axis_letter)
         self.rotary_direction.setCurrentIndex(0 if rotary.direction == 1 else 1)
@@ -196,6 +277,18 @@ class MachineDialog(QDialog):
         self._set_optional_float(self.positioning_precision, rotary.positioning_precision_deg)
         self.drive_system.setText(rotary.drive_system or "")
         self.motor.setText(rotary.motor or "")
+        if machine.dynamics is not None and all(axis in machine.dynamics for axis in "XYZA"):
+            self.dynamics_measured.setChecked(True)
+            for axis, (velocity, acceleration) in self.axis_dynamics.items():
+                velocity.setValue(machine.dynamics[axis].max_velocity)
+                acceleration.setValue(machine.dynamics[axis].max_acceleration)
+        if machine.capabilities is not None:
+            self.simultaneous_xyza.setChecked(machine.capabilities.simultaneous_xyza)
+            self.inverse_time_g93.setChecked(
+                machine.capabilities.inverse_time_feed_g93
+            )
+        if machine.assembly is not None:
+            self.assembly_json.setPlainText(machine.assembly.model_dump_json(indent=2))
         self._set_optional_int(self.max_spindle_rpm, machine.max_spindle_rpm)
         self._set_optional_float(self.spindle_power, machine.spindle_power_w)
         self._set_optional_float(self.max_linear_speed, machine.max_linear_speed_mm_min)
@@ -219,6 +312,29 @@ class MachineDialog(QDialog):
         value = editor.text().strip()
         return value or None
 
+    def _update_xyza_fields(self, _checked: bool = False) -> None:
+        enabled = self.xyza_measured.isChecked()
+        for editor in (
+            self.y_minimum,
+            self.y_maximum,
+            self.rotary_pivot_y,
+            self.rotary_pivot_z,
+            self.rotary_zero,
+            self.spindle_axis_x,
+            self.spindle_axis_y,
+            self.spindle_axis_z,
+            self.g54_x,
+            self.g54_y,
+            self.g54_z,
+        ):
+            editor.setEnabled(enabled)
+
+    def _update_dynamics_fields(self, _checked: bool = False) -> None:
+        enabled = self.dynamics_measured.isChecked()
+        for velocity, acceleration in self.axis_dynamics.values():
+            velocity.setEnabled(enabled)
+            acceleration.setEnabled(enabled)
+
     @staticmethod
     def _program_lines(editor: QPlainTextEdit) -> tuple[str, ...]:
         return tuple(line.strip() for line in editor.toPlainText().splitlines() if line.strip())
@@ -237,6 +353,61 @@ class MachineDialog(QDialog):
         direction = self.rotary_direction.currentData()
         if direction not in (-1, 1):
             raise ValueError("Select a supported rotary direction.")
+        source_configuration = (
+            None if self._source_machine is None else self._source_machine.xyza_configuration
+        )
+        xyza_configuration = None
+        y_limits = None
+        if self.xyza_measured.isChecked():
+            y_limits = AxisLimits(
+                minimum=self.y_minimum.value(), maximum=self.y_maximum.value()
+            )
+            xyza_configuration = XYZAConfiguration(
+                rotary_pivot_y=self.rotary_pivot_y.value(),
+                rotary_pivot_z=self.rotary_pivot_z.value(),
+                rotary_zero_deg=self.rotary_zero.value(),
+                spindle_axis=(
+                    self.spindle_axis_x.value(),
+                    self.spindle_axis_y.value(),
+                    self.spindle_axis_z.value(),
+                ),
+                g54_origin=(
+                    self.g54_x.value(), self.g54_y.value(), self.g54_z.value()
+                ),
+                setup_transform=(
+                    source_configuration.setup_transform
+                    if source_configuration is not None
+                    else identity_transform()
+                ),
+            )
+        dynamics = None
+        if self.dynamics_measured.isChecked():
+            dynamics = {
+                axis: AxisDynamics(
+                    max_velocity=velocity.value(),
+                    max_acceleration=acceleration.value(),
+                )
+                for axis, (velocity, acceleration) in self.axis_dynamics.items()
+            }
+        capabilities = None
+        if (
+            (self._source_machine is not None and self._source_machine.capabilities is not None)
+            or self.simultaneous_xyza.isChecked()
+            or self.inverse_time_g93.isChecked()
+        ):
+            capabilities = MachineCapabilities(
+                simultaneous_xyza=self.simultaneous_xyza.isChecked(),
+                inverse_time_feed_g93=self.inverse_time_g93.isChecked(),
+            )
+        assembly_text = self.assembly_json.toPlainText().strip()
+        try:
+            assembly = (
+                MachineAssembly.model_validate_json(assembly_text)
+                if assembly_text
+                else None
+            )
+        except ValueError as error:
+            raise ValueError(f"Invalid measured assembly JSON: {error}") from error
         return MachineDefinition(
             name=self.name.text().strip(),
             profile_verified=False,
@@ -248,6 +419,7 @@ class MachineDialog(QDialog):
                 minimum=self.z_minimum.value(),
                 maximum=self.z_maximum.value(),
             ),
+            y_limits=y_limits,
             rotary_axis=RotaryAxisConfig(
                 axis_letter=self.axis_letter.text(),
                 direction=direction,
@@ -258,6 +430,14 @@ class MachineDialog(QDialog):
                 positioning_precision_deg=self._optional_float(self.positioning_precision),
                 drive_system=self._optional_text(self.drive_system),
                 motor=self._optional_text(self.motor),
+            ),
+            xyza_configuration=xyza_configuration,
+            machine_assembly_configured=assembly is not None,
+            dynamics=dynamics,
+            capabilities=capabilities,
+            assembly=assembly,
+            observations=(
+                None if self._source_machine is None else self._source_machine.observations
             ),
             max_spindle_rpm=self._optional_int(self.max_spindle_rpm),
             spindle_power_w=self._optional_float(self.spindle_power),

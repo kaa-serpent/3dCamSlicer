@@ -191,10 +191,10 @@ def test_z1_factory_rejects_13_001_rpm() -> None:
     assert any("spindle speed exceeds" in error for error in report.errors)
 
 
-def test_z1_factory_accepts_its_1_200_mm_min_feed_boundary() -> None:
+def test_z1_factory_accepts_its_2_000_mm_min_feed_boundary() -> None:
     operation = _operation(
         ToolpathPoint(0, 45, 0, rapid=True),
-        ToolpathPoint(0, 40, 1, feed=1_200),
+        ToolpathPoint(0, 40, 1, feed=2_000),
     )
 
     report = validate_operations(
@@ -210,7 +210,7 @@ def test_z1_factory_accepts_its_1_200_mm_min_feed_boundary() -> None:
 def test_z1_factory_rejects_feed_above_linear_machine_limit() -> None:
     operation = _operation(
         ToolpathPoint(0, 45, 0, rapid=True),
-        ToolpathPoint(0, 40, 1, feed=1_200.001),
+        ToolpathPoint(0, 40, 1, feed=2_000.001),
     )
 
     report = validate_operations(
@@ -238,7 +238,7 @@ def test_z1_validation_discloses_that_rotary_rate_is_not_derivable() -> None:
     )
 
     assert report.valid
-    assert any("at or below 3600 deg/min" in warning for warning in report.warnings)
+    assert any("at or below 1800 deg/min" in warning for warning in report.warnings)
 
 
 @pytest.mark.parametrize(
