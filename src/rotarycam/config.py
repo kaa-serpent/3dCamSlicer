@@ -12,8 +12,27 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from rotarycam.machine.assemblies import (
+    AxisDynamics,
+    MachineAssembly,
+    MachineCapabilities,
+)
+
 PositiveFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
 NonNegativeFloat = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
+type MatrixRow = tuple[float, float, float, float]
+type Matrix4x4 = tuple[MatrixRow, MatrixRow, MatrixRow, MatrixRow]
+
+
+def identity_transform() -> Matrix4x4:
+    """Return an immutable affine identity transform."""
+
+    return (
+        (1.0, 0.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0, 0.0),
+        (0.0, 0.0, 0.0, 1.0),
+    )
 
 
 class RadialSamplingMode(StrEnum):
@@ -95,6 +114,7 @@ class XYZAConfiguration(StrictConfigModel):
     rotary_zero_deg: float
     spindle_axis: tuple[float, float, float]
     g54_origin: tuple[float, float, float]
+    setup_transform: Matrix4x4 = Field(default_factory=identity_transform)
 
     @field_validator(
         "rotary_pivot_y",
@@ -114,6 +134,37 @@ class XYZAConfiguration(StrictConfigModel):
             raise ValueError("XYZA vectors must be finite")
         return value
 
+    @field_validator("setup_transform")
+    @classmethod
+    def validate_setup_transform(cls, value: Matrix4x4) -> Matrix4x4:
+        if not all(math.isfinite(component) for row in value for component in row):
+            raise ValueError("setup_transform values must be finite")
+        if value[3] != (0.0, 0.0, 0.0, 1.0):
+            raise ValueError("setup_transform must be an affine 4x4 matrix")
+        rotation = tuple(
+            tuple(value[row][column] for row in range(3)) for column in range(3)
+        )
+        for index, column in enumerate(rotation):
+            magnitude = math.sqrt(sum(component * component for component in column))
+            if not math.isclose(magnitude, 1.0, rel_tol=0.0, abs_tol=1e-9):
+                raise ValueError("setup_transform rotation must be orthonormal")
+            for other in rotation[index + 1 :]:
+                dot_product = sum(
+                    left * right for left, right in zip(column, other, strict=True)
+                )
+                if not math.isclose(dot_product, 0.0, rel_tol=0.0, abs_tol=1e-9):
+                    raise ValueError("setup_transform rotation must be orthonormal")
+        determinant = (
+            value[0][0] * (value[1][1] * value[2][2] - value[1][2] * value[2][1])
+            - value[0][1]
+            * (value[1][0] * value[2][2] - value[1][2] * value[2][0])
+            + value[0][2]
+            * (value[1][0] * value[2][1] - value[1][1] * value[2][0])
+        )
+        if not math.isclose(determinant, 1.0, rel_tol=0.0, abs_tol=1e-9):
+            raise ValueError("setup_transform rotation must be right-handed")
+        return value
+
     @model_validator(mode="after")
     def validate_spindle_axis(self) -> XYZAConfiguration:
         if math.sqrt(sum(component * component for component in self.spindle_axis)) <= 1e-12:
@@ -131,6 +182,9 @@ class MachineDefinition(StrictConfigModel):
     rotary_axis: RotaryAxisConfig = Field(default_factory=RotaryAxisConfig)
     xyza_configuration: XYZAConfiguration | None = None
     machine_assembly_configured: bool = False
+    dynamics: dict[str, AxisDynamics] | None = None
+    capabilities: MachineCapabilities | None = None
+    assembly: MachineAssembly | None = None
     max_spindle_rpm: int | None = Field(default=None, gt=0)
     spindle_power_w: PositiveFloat | None = None
     max_linear_speed_mm_min: PositiveFloat | None = None
@@ -161,6 +215,20 @@ class MachineDefinition(StrictConfigModel):
         if any("\n" in line or "\r" in line for line in value):
             raise ValueError("program header/footer entries must each be one line")
         return value
+
+    @field_validator("dynamics")
+    @classmethod
+    def validate_dynamics(
+        cls, value: dict[str, AxisDynamics] | None
+    ) -> dict[str, AxisDynamics] | None:
+        if value is None:
+            return None
+        normalized = {axis.strip().upper(): limits for axis, limits in value.items()}
+        if any(axis not in {"X", "Y", "Z", "A"} for axis in normalized):
+            raise ValueError("dynamics axes must be X, Y, Z, or A")
+        if len(normalized) != len(value):
+            raise ValueError("dynamics axes must be unique ignoring case")
+        return normalized
 
 
 class MachiningSettings(StrictConfigModel):

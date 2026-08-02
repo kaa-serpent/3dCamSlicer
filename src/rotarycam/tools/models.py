@@ -105,6 +105,8 @@ class Tool:
         if self.stickout is not None:
             if not isfinite(self.stickout) or self.stickout <= 0.0:
                 raise ValueError("stickout must be finite and greater than zero")
+            if self.stickout < self.flute_length:
+                raise ValueError("stickout must not be shorter than flute_length")
             if self.stickout > self.overall_length:
                 raise ValueError("stickout must not exceed overall_length")
         if self.holder is not None and not isinstance(self.holder, ToolHolder):

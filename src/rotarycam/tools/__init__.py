@@ -1,6 +1,7 @@
 """Cutting tool models, conservative kernels, and accessibility."""
 
 from rotarycam.tools.accessibility import compute_accessibility_mask
+from rotarycam.tools.assembly import ToolAssembly
 from rotarycam.tools.ball_cutter import BallCutterKernel, compensate_ball_cutter
 from rotarycam.tools.compensation import compute_compensated_tool_grid
 from rotarycam.tools.cutter_kernel import (
@@ -29,6 +30,7 @@ __all__ = [
     "FlatCutterKernel",
     "TaperedCutterKernel",
     "Tool",
+    "ToolAssembly",
     "ToolHolder",
     "ToolHolderRecord",
     "ToolLibraryDocument",

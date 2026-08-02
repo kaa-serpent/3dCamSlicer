@@ -173,6 +173,8 @@ class ToolConfig(_ProjectRecord):
         if self.stickout is not None:
             if not math.isfinite(self.stickout):
                 raise ValueError("stickout must be finite")
+            if self.stickout < self.flute_length:
+                raise ValueError("stickout must not be shorter than flute_length")
             if self.stickout > self.overall_length:
                 raise ValueError("stickout must not exceed overall_length")
         return self
