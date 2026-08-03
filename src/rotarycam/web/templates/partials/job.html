@@ -1,0 +1,42 @@
+{% if job %}
+{% set job_state = job.state.value|default(job.state) %}
+{% set job_stale = job.revision != workspace.revision %}
+{% set progress = ((job.step / job.total) * 100)|round|int if job.total else 0 %}
+<section id="job-panel" class="job-panel is-{{ job_state }}"
+         data-job-state="{{ job_state }}" data-job-revision="{{ job.revision }}"
+         aria-labelledby="job-title"
+         {% if job_state in ('queued', 'running') %}
+         hx-get="/projects/{{ workspace.project_id }}/job"
+         hx-trigger="every 1s" hx-target="this" hx-swap="outerHTML"
+         {% endif %}>
+  <div class="job-heading">
+    <span class="job-state-icon" aria-hidden="true"></span>
+    <div>
+      <h3 id="job-title">
+        {% if job_stale %}Inputs changed during generation
+        {% elif job_state == 'completed' %}Generation complete
+        {% elif job_state == 'failed' %}Generation stopped
+        {% elif job_state == 'running' %}Building toolpaths
+        {% else %}Generation queued{% endif %}
+      </h3>
+      <p>{% if job_stale %}This earlier result will be discarded; generate again when it finishes.{% else %}{{ job.message }}{% endif %}</p>
+    </div>
+    <span class="job-fraction">{{ job.step }}/{{ job.total }}</span>
+  </div>
+  <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+       aria-valuenow="{{ progress }}" aria-label="Generation progress">
+    <span style="width: {{ progress }}%"></span>
+  </div>
+  {% if job.error %}<p class="field-error" role="alert">{{ job.error }}</p>{% endif %}
+</section>
+{% else %}
+<section id="job-panel" class="job-panel is-idle" data-job-state="idle" aria-labelledby="job-title">
+  <div class="job-heading">
+    <span class="job-state-icon" aria-hidden="true"></span>
+    <div>
+      <h3 id="job-title">Ready when you are</h3>
+      <p>Generation runs five reviewable stages and keeps this workspace responsive.</p>
+    </div>
+  </div>
+</section>
+{% endif %}

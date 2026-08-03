@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#101512">
+    <meta name="csrf-token" content="{{ csrf_token|default('') }}">
+    <title>{% block title %}RotaryCAM{% endblock %}</title>
+    <link rel="stylesheet" href="/static/styles.css?v=1">
+    <script src="/static/vendor/htmx.min.js?v=2.0.10" defer></script>
+    <script src="/static/app.js?v=1" defer></script>
+    {% block head %}{% endblock %}
+  </head>
+  <body class="{% block body_class %}{% endblock %}">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    {% block body %}{% endblock %}
+    <div id="status-region" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

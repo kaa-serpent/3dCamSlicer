@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Projects · RotaryCAM{% endblock %}
+{% block body_class %}home-page{% endblock %}
+
+{% block body %}
+<header class="home-header">
+  <a class="brand" href="/" aria-label="RotaryCAM home">
+    <span class="brand-mark" aria-hidden="true">R</span>
+    <span><strong>RotaryCAM</strong><small>Local 4-axis workshop</small></span>
+  </a>
+  <span class="local-pill"><span aria-hidden="true"></span> Local only</span>
+</header>
+
+<main id="main-content" class="home-main">
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="eyebrow">From mesh to reviewable motion</div>
+    <h1 id="hero-title">Shape rotary toolpaths with confidence.</h1>
+    <p>Set up the model, stock, cutters, strategy, and supports in one guided workspace. RotaryCAM keeps export locked until every critical safety check passes.</p>
+
+    <form class="create-project" method="post" action="/projects"
+          hx-post="/projects" hx-target="body" hx-swap="innerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+      <label for="project-name">New project name</label>
+      <div class="input-action">
+        <input id="project-name" name="name" type="text" value="Untitled project"
+               maxlength="120" autocomplete="off" required>
+        <button class="button button-primary" type="submit">
+          Create project <span aria-hidden="true">→</span>
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <section class="recent-projects" aria-labelledby="recent-title">
+    <div class="section-heading">
+      <div>
+        <span class="eyebrow">Continue working</span>
+        <h2 id="recent-title">Recent projects</h2>
+      </div>
+      <span class="count-pill">{{ projects|default([])|length }}</span>
+    </div>
+
+    <div id="project-list" class="project-list">
+      {% for project in projects|default([]) %}
+      <a class="project-card" href="/projects/{{ project.project_id }}">
+        <span class="project-avatar" aria-hidden="true">{{ project.name[:1]|upper }}</span>
+        <span class="project-card-copy">
+          <strong>{{ project.name }}</strong>
+          <small>
+            {% if project.mesh_asset %}{{ project.mesh_asset }}{% else %}Waiting for a model{% endif %}
+            · Revision {{ project.revision }}
+          </small>
+        </span>
+        <span class="project-state {% if project.is_complete %}is-complete{% endif %}">
+          {% if project.is_complete %}Ready to generate{% else %}Setup in progress{% endif %}
+        </span>
+        <span class="project-open" aria-hidden="true">→</span>
+      </a>
+      {% else %}
+      <div class="empty-list">
+        <span class="empty-list-icon" aria-hidden="true">+</span>
+        <h3>Your workshop is clear</h3>
+        <p>Create a project to begin with a guided machine setup.</p>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <aside class="safety-note">
+    <span class="safety-note-mark" aria-hidden="true">!</span>
+    <div>
+      <strong>Machine-safe by design</strong>
+      <p>Generated G-code still requires controller verification, simulation, and a supervised dry-run.</p>
+    </div>
+  </aside>
+</main>
+{% endblock %}

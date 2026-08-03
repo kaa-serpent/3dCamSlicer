@@ -1,0 +1,299 @@
+{% extends "partials/fragment_base.html" if request is defined and request.headers.get('hx-request') == 'true' else "base.html" %}
+
+{% set project_id = workspace.project_id %}
+{% set active_step = 'review' if active_step|default('model') == 'generate' else active_step|default('model') %}
+{% set has_model = workspace.mesh_asset is not none %}
+{% set has_stock = workspace.stock is not none %}
+{% set has_tools = workspace.tools|length > 0 %}
+{% set setup_ready = has_model and has_stock and has_tools %}
+{% set machine_verified = workspace.machine.profile_verified %}
+{% set field_errors = form_errors|default({}) %}
+{% set selected_tool_numbers = workspace.tools|map(attribute='number')|list %}
+
+{% block title %}{{ workspace.name }} · RotaryCAM{% endblock %}
+{% block body_class %}workspace-page{% endblock %}
+
+{% block body %}
+<div id="workspace-shell" class="workspace-shell" data-project-id="{{ project_id }}">
+  <header class="topbar">
+    <a class="brand brand-compact" href="/" aria-label="Back to RotaryCAM projects">
+      <span class="brand-mark" aria-hidden="true">R</span>
+      <span><strong>RotaryCAM</strong><small>Local workshop</small></span>
+    </a>
+
+    <div class="project-identity">
+      <span class="topbar-label">Project</span>
+      <strong>{{ workspace.name }}</strong>
+      <span class="revision-pill">r{{ workspace.revision }}</span>
+    </div>
+
+    <form class="machine-picker" method="post" action="/projects/{{ project_id }}/machine"
+          hx-post="/projects/{{ project_id }}/machine" hx-target="#workspace-shell" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+      <label for="machine-name">Machine profile</label>
+      <div class="select-action">
+        <select id="machine-name" name="machine_name">
+          {% for machine in machines|default([]) %}
+          <option value="{{ machine.name }}" {% if machine.name == workspace.machine.name %}selected{% endif %}>
+            {{ machine.name }}
+          </option>
+          {% else %}
+          <option value="{{ workspace.machine.name }}">{{ workspace.machine.name }}</option>
+          {% endfor %}
+        </select>
+        <button class="icon-button" type="submit" aria-label="Apply machine profile" title="Apply machine profile">↻</button>
+      </div>
+    </form>
+
+    <div class="safety-badge {% if machine_verified %}is-verified{% else %}is-unverified{% endif %}"
+         title="{% if machine_verified %}Controller profile verified{% else %}Export remains locked until this profile is verified outside the web UI{% endif %}">
+      <span class="safety-dot" aria-hidden="true"></span>
+      <span><small>Controller safety</small><strong>{% if machine_verified %}Verified profile{% else %}Unverified profile{% endif %}</strong></span>
+    </div>
+  </header>
+
+  <main id="main-content" class="workspace-main">
+    <nav class="workflow-rail" aria-label="Project setup">
+      <div class="rail-heading">
+        <span class="eyebrow">Workflow</span>
+        <strong>Project setup</strong>
+      </div>
+      <ol class="workflow-list">
+        {% set step_id='model' %}{% set step_number=1 %}{% set step_label='Model' %}{% set step_hint=('Imported' if has_model else 'Import STL or OBJ') %}{% set complete=has_model %}{% set available=true %}{% include 'partials/step.html' %}
+        {% set step_id='stock' %}{% set step_number=2 %}{% set step_label='Stock' %}{% set step_hint=('Defined' if has_stock else 'Set dimensions') %}{% set complete=has_stock %}{% set available=has_model %}{% set unavailable_reason='Import a model first' %}{% include 'partials/step.html' %}
+        {% set step_id='tools' %}{% set step_number=3 %}{% set step_label='Tools' %}{% set step_hint=((workspace.tools|length|string) ~ ' selected' if has_tools else 'Choose cutters') %}{% set complete=has_tools %}{% set available=has_stock %}{% set unavailable_reason='Define stock first' %}{% include 'partials/step.html' %}
+        {% set step_id='strategy' %}{% set step_number=4 %}{% set step_label='Strategy' %}{% set step_hint='Sampling & finish' %}{% set complete=setup_ready %}{% set available=has_tools %}{% set unavailable_reason='Select at least one tool' %}{% include 'partials/step.html' %}
+        {% set step_id='supports' %}{% set step_number=5 %}{% set step_label='Supports' %}{% set step_hint=((workspace.supports|length|string) ~ ' placed' if workspace.supports else 'Optional keep-outs') %}{% set complete=workspace.supports|length > 0 %}{% set available=setup_ready %}{% set unavailable_reason='Complete the machining setup first' %}{% include 'partials/step.html' %}
+        {% set step_id='review' %}{% set step_number=6 %}{% set step_label='Generate & Review' %}{% set step_hint=('Export ready' if export_ready else 'Validate motion') %}{% set complete=export_ready %}{% set available=setup_ready %}{% set unavailable_reason='Model, stock, and tools are required' %}{% include 'partials/step.html' %}
+      </ol>
+
+      <div class="rail-footnote">
+        <span aria-hidden="true">i</span>
+        <p>Every valid edit is autosaved locally.</p>
+      </div>
+    </nav>
+
+    <section class="scene-column" aria-labelledby="scene-title">
+      <div class="scene-toolbar">
+        <div>
+          <span class="eyebrow">Interactive preview</span>
+          <h1 id="scene-title">Machining scene</h1>
+        </div>
+        <div class="view-actions" aria-label="Camera orientation">
+          <button type="button" class="chip-button" data-view-axis="iso" aria-pressed="true">ISO</button>
+          <button type="button" class="chip-button" data-view-axis="x" aria-pressed="false">X</button>
+          <button type="button" class="chip-button" data-view-axis="y" aria-pressed="false">Y</button>
+          <button type="button" class="chip-button" data-view-axis="z" aria-pressed="false">Z</button>
+          <button type="button" class="icon-button" data-view-fit aria-label="Fit scene to view" title="Fit scene to view">⌖</button>
+        </div>
+      </div>
+
+      <div class="scene-stage">
+        <div class="layer-controls" aria-label="Scene layers">
+          <label><input type="checkbox" data-scene-layer="target" checked><span class="layer-swatch swatch-target"></span>Target</label>
+          <label><input type="checkbox" data-scene-layer="stock" checked><span class="layer-swatch swatch-stock"></span>Stock</label>
+          <label><input type="checkbox" data-scene-layer="supports" checked><span class="layer-swatch swatch-support"></span>Supports</label>
+          <label><input type="checkbox" data-scene-layer="toolpaths" checked><span class="layer-swatch swatch-path"></span>Toolpaths</label>
+          <label><input type="checkbox" data-scene-layer="residual" checked><span class="layer-swatch swatch-residual"></span>Residual</label>
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <label class="tool-filter-label" for="tool-filter">Tool</label>
+          <select id="tool-filter" data-tool-filter aria-label="Filter toolpaths by tool">
+            <option value="all">All tools</option>
+            {% for tool in workspace.tools %}<option value="{{ tool.number }}">T{{ tool.number }} · {{ tool.name }}</option>{% endfor %}
+          </select>
+        </div>
+
+        <div id="scene-viewer" class="scene-viewer"
+             data-project-id="{{ project_id }}"
+             data-manifest-url="/projects/{{ project_id }}/scene/manifest"
+             data-support-pick-url="/projects/{{ project_id }}/supports/pick"
+             data-csrf-token="{{ csrf_token|default('') }}"
+             aria-label="Interactive 3D machining preview">
+          <div class="scene-loading" hidden aria-live="polite">
+            <span class="spinner" aria-hidden="true"></span> Loading scene…
+          </div>
+          {% if not has_model %}
+          <div class="scene-empty">
+            <span class="scene-empty-orbit" aria-hidden="true"><span></span></span>
+            <strong>Your model will appear here</strong>
+            <p>Import an STL or OBJ file to inspect its alignment and build the setup.</p>
+            <button type="button" class="button button-secondary" data-step-select="model">Choose a model</button>
+          </div>
+          {% else %}
+          <noscript><p class="scene-empty">Enable JavaScript to use the interactive 3D preview.</p></noscript>
+          {% endif %}
+        </div>
+
+        <div class="scene-legend" aria-hidden="true">
+          <span><i class="axis-x"></i>X longitudinal</span>
+          <span><i class="axis-a"></i>A rotary</span>
+          <span><i class="axis-r"></i>R radial</span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="context-panel" aria-label="Step settings">
+      <section id="panel-model" class="step-panel" data-step-panel="model" tabindex="-1">
+        <header class="panel-heading"><span class="panel-number">01</span><div><span class="eyebrow">Geometry</span><h2>Import model</h2></div></header>
+        <p class="panel-intro">Use a watertight STL or OBJ. RotaryCAM copies it into this local project before analysis.</p>
+        <form method="post" action="/projects/{{ project_id }}/mesh" enctype="multipart/form-data"
+              hx-post="/projects/{{ project_id }}/mesh" hx-encoding="multipart/form-data"
+              hx-target="#workspace-shell" hx-swap="outerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+          <label class="file-drop" for="mesh-file">
+            <span class="file-icon" aria-hidden="true">↑</span>
+            <strong>{% if has_model %}Replace model{% else %}Choose STL or OBJ{% endif %}</strong>
+            <small>{% if has_model %}Current: {{ workspace.mesh_asset }}{% else %}Up to the server upload limit{% endif %}</small>
+            <input id="mesh-file" type="file" name="mesh" accept=".stl,.obj,model/stl,text/plain" required>
+          </label>
+          {% if field_errors.get('mesh') %}<p class="field-error" role="alert">{{ field_errors.get('mesh') }}</p>{% endif %}
+          <button class="button button-primary button-full" type="submit">Import and align model</button>
+        </form>
+        <div class="help-card"><strong>Axis convention</strong><p>X runs along the stock. A0 points toward +Y and positive A turns toward +Z.</p></div>
+      </section>
+
+      <section id="panel-stock" class="step-panel" data-step-panel="stock" tabindex="-1" hidden>
+        <header class="panel-heading"><span class="panel-number">02</span><div><span class="eyebrow">Material</span><h2>Define stock</h2></div></header>
+        <p class="panel-intro">Enter finished blank dimensions in millimetres. The stock must fully contain the aligned target.</p>
+        {% set stock_kind = workspace.stock.stock_type.value|default(workspace.stock.stock_type) if workspace.stock else 'cylinder' %}
+        <form method="post" action="/projects/{{ project_id }}/stock"
+              hx-post="/projects/{{ project_id }}/stock" hx-target="#workspace-shell" hx-swap="outerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+          <fieldset class="segmented-field">
+            <legend>Stock shape</legend>
+            <label><input type="radio" name="type" value="cylinder" {% if stock_kind == 'cylinder' %}checked{% endif %}><span>Cylinder</span></label>
+            <label><input type="radio" name="type" value="rectangle" {% if stock_kind == 'rectangle' %}checked{% endif %}><span>Rectangle</span></label>
+          </fieldset>
+          <div class="form-grid">
+            <label class="field span-2"><span>Length <small>mm</small></span><input name="length" type="number" min="0.001" step="0.001" value="{{ workspace.stock.length if workspace.stock else '' }}" required></label>
+            <label class="field" data-stock-shape="cylinder"><span>Diameter <small>mm</small></span><input name="diameter" type="number" min="0.001" step="0.001" value="{{ workspace.stock.diameter|default('') if workspace.stock else '' }}"></label>
+            <label class="field" data-stock-shape="rectangle"><span>Width <small>mm</small></span><input name="width" type="number" min="0.001" step="0.001" value="{{ workspace.stock.width|default('') if workspace.stock else '' }}"></label>
+            <label class="field" data-stock-shape="rectangle"><span>Height <small>mm</small></span><input name="height" type="number" min="0.001" step="0.001" value="{{ workspace.stock.height|default('') if workspace.stock else '' }}"></label>
+          </div>
+          {% if field_errors.get('stock') %}<p class="field-error" role="alert">{{ field_errors.get('stock') }}</p>{% endif %}
+          <button class="button button-primary button-full" type="submit">Save stock</button>
+        </form>
+      </section>
+
+      <section id="panel-tools" class="step-panel" data-step-panel="tools" tabindex="-1" hidden>
+        <header class="panel-heading"><span class="panel-number">03</span><div><span class="eyebrow">Cutters</span><h2>Select tools</h2></div></header>
+        <p class="panel-intro">Pick one or more cutters from your local library. Tool numbers must remain unique.</p>
+        <form method="post" action="/projects/{{ project_id }}/tools"
+              hx-post="/projects/{{ project_id }}/tools" hx-target="#workspace-shell" hx-swap="outerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+          <div class="choice-list">
+            {% for tool in tools|default([]) %}
+            <label class="tool-choice">
+              <input type="checkbox" name="tool_numbers" value="{{ tool.number }}" {% if tool.number in selected_tool_numbers %}checked{% endif %}>
+              <span class="tool-number">T{{ tool.number }}</span>
+              <span class="tool-copy"><strong>{{ tool.name }}</strong><small>{{ tool.tool_type.value|default(tool.tool_type)|title }} · Ø{{ tool.diameter }} mm · {{ tool.spindle_rpm }} rpm</small></span>
+              <span class="choice-check" aria-hidden="true">✓</span>
+            </label>
+            {% else %}
+            <div class="inline-empty"><strong>No tools available</strong><p>Add cutters to the desktop tool library, then reload this page.</p></div>
+            {% endfor %}
+          </div>
+          {% if field_errors.get('tools') %}<p class="field-error" role="alert">{{ field_errors.get('tools') }}</p>{% endif %}
+          <button class="button button-primary button-full" type="submit" {% if not tools|default([]) %}disabled title="The tool library is empty"{% endif %}>Use selected tools</button>
+        </form>
+      </section>
+
+      <section id="panel-strategy" class="step-panel" data-step-panel="strategy" tabindex="-1" hidden>
+        <header class="panel-heading"><span class="panel-number">04</span><div><span class="eyebrow">Machining</span><h2>Set strategy</h2></div></header>
+        <p class="panel-intro">Control sampling density, finish direction, allowance, and clearance. Smaller steps take longer to calculate.</p>
+        <form method="post" action="/projects/{{ project_id }}/settings"
+              hx-post="/projects/{{ project_id }}/settings" hx-target="#workspace-shell" hx-swap="outerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+          <div class="form-grid">
+            <label class="field"><span>X step <small>mm</small></span><input name="x_step" type="number" min="0.001" step="0.001" value="{{ workspace.settings.x_step }}" required></label>
+            <label class="field"><span>Angle step <small>deg</small></span><input name="angle_step_deg" type="number" min="0.001" max="360" step="0.001" value="{{ workspace.settings.angle_step_deg }}" required></label>
+            <label class="field span-2"><span>Radial sampling</span><select name="radial_sampling_mode"><option value="strict" {% if workspace.settings.radial_sampling_mode == 'strict' %}selected{% endif %}>Strict single surface</option><option value="outer_envelope" {% if workspace.settings.radial_sampling_mode == 'outer_envelope' %}selected{% endif %}>Outer envelope</option></select></label>
+            <label class="field span-2"><span>Finishing direction</span><select name="finishing_strategy"><option value="helical" {% if workspace.settings.finishing_strategy == 'helical' %}selected{% endif %}>Helical</option><option value="longitudinal" {% if workspace.settings.finishing_strategy == 'longitudinal' %}selected{% endif %}>Longitudinal</option></select></label>
+            <label class="field"><span>Rough allowance <small>mm</small></span><input name="roughing_allowance" type="number" min="0" step="0.001" value="{{ workspace.settings.roughing_allowance }}" required></label>
+            <label class="field"><span>Final tolerance <small>mm</small></span><input name="final_tolerance" type="number" min="0.001" step="0.001" value="{{ workspace.settings.final_tolerance }}" required></label>
+            <label class="field span-2"><span>Safe clearance <small>mm</small></span><input name="safe_clearance" type="number" min="0.001" step="0.001" value="{{ workspace.settings.safe_clearance }}" required></label>
+          </div>
+          {% if field_errors.get('settings') %}<p class="field-error" role="alert">{{ field_errors.get('settings') }}</p>{% endif %}
+          <button class="button button-primary button-full" type="submit">Save strategy</button>
+        </form>
+      </section>
+
+      <section id="panel-supports" class="step-panel" data-step-panel="supports" tabindex="-1" hidden>
+        <header class="panel-heading"><span class="panel-number">05</span><div><span class="eyebrow">Workholding</span><h2>Place supports</h2></div></header>
+        <p class="panel-intro">Click the target in the 3D view or enter X and A directly. Supports preserve material as keep-out regions.</p>
+        <form id="support-form" method="post" action="/projects/{{ project_id }}/supports"
+              hx-post="/projects/{{ project_id }}/supports" hx-target="#workspace-shell" hx-swap="outerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+          <input type="hidden" name="pick_y" value="">
+          <input type="hidden" name="pick_z" value="">
+          <fieldset class="segmented-field"><legend>Support shape</legend><label><input type="radio" name="type" value="rectangle" checked><span>Rectangle</span></label><label><input type="radio" name="type" value="cylinder"><span>Cylinder</span></label></fieldset>
+          <div class="form-grid">
+            <label class="field"><span>X position <small>mm</small></span><input name="x" type="number" step="0.001" required></label>
+            <label class="field"><span>A angle <small>deg</small></span><input name="angle_deg" type="number" step="0.001" required></label>
+            <label class="field"><span>Thickness <small>mm</small></span><input name="thickness" type="number" min="0.001" step="0.001" value="2" required></label>
+            <label class="field"><span>Transition <small>mm</small></span><input name="transition" type="number" min="0" step="0.001" value="1" required></label>
+            <label class="field" data-support-shape="rectangle"><span>Length X <small>mm</small></span><input name="length_x" type="number" min="0.001" step="0.001" value="8"></label>
+            <label class="field" data-support-shape="rectangle"><span>Surface width <small>mm</small></span><input name="width_surface" type="number" min="0.001" step="0.001" value="8"></label>
+            <label class="field span-2" data-support-shape="cylinder"><span>Diameter <small>mm</small></span><input name="diameter" type="number" min="0.001" step="0.001" value="8"></label>
+          </div>
+          {% if field_errors.get('supports') %}<p class="field-error" role="alert">{{ field_errors.get('supports') }}</p>{% endif %}
+          <button class="button button-primary button-full" type="submit">Add support</button>
+        </form>
+
+        {% if workspace.supports %}
+        <div class="support-list" aria-label="Placed supports">
+          {% for support in workspace.supports %}
+          <article class="support-item">
+            <span class="support-shape" aria-hidden="true"></span>
+            <div><strong>{{ support.support_type.value|default(support.support_type)|title }} support</strong><small>X {{ '%.2f'|format(support.x) }} mm · A {{ '%.1f'|format(support.angle_deg) }}°</small></div>
+            <button type="button" class="icon-button danger" aria-label="Delete support at X {{ '%.2f'|format(support.x) }}"
+                    hx-delete="/projects/{{ project_id }}/supports/{{ support.id }}"
+                    hx-vals='{"csrf_token":"{{ csrf_token|default('') }}"}'
+                    hx-target="#workspace-shell" hx-swap="outerHTML">×</button>
+          </article>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </section>
+
+      <section id="panel-review" class="step-panel" data-step-panel="review" tabindex="-1" hidden>
+        <header class="panel-heading"><span class="panel-number">06</span><div><span class="eyebrow">Safety gate</span><h2>Generate & review</h2></div></header>
+        <p class="panel-intro">Sampling, planning, simulation, validation, and preview preparation run in sequence.</p>
+
+        {% include 'partials/job.html' %}
+
+        <form class="generate-form" method="post" action="/projects/{{ project_id }}/generate"
+              hx-post="/projects/{{ project_id }}/generate" hx-target="#job-panel" hx-swap="outerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+          <button class="button button-primary button-full" type="submit"
+                  {% if not setup_ready %}disabled title="Model, stock, and at least one tool are required"{% endif %}>
+            Generate toolpaths
+          </button>
+          {% if not setup_ready %}<p class="disabled-reason">Complete Model, Stock, and Tools to generate.</p>{% endif %}
+        </form>
+
+        <div class="validation-panel">
+          <div class="validation-heading"><h3>Validation</h3><span>{{ validation_errors|default([])|length }} errors · {{ validation_warnings|default([])|length }} warnings</span></div>
+          {% if validation_errors|default([]) %}
+          <ul class="message-list error-list">{% for error in validation_errors %}<li><span aria-hidden="true">×</span>{{ error }}</li>{% endfor %}</ul>
+          {% endif %}
+          {% if validation_warnings|default([]) %}
+          <ul class="message-list warning-list">{% for warning in validation_warnings %}<li><span aria-hidden="true">!</span>{{ warning }}</li>{% endfor %}</ul>
+          {% endif %}
+          {% if not validation_errors|default([]) and not validation_warnings|default([]) %}
+          <p class="validation-empty">Generate current inputs to run the complete validation pipeline.</p>
+          {% endif %}
+        </div>
+
+        <div class="dry-run-warning"><span aria-hidden="true">!</span><p><strong>Dry-run required</strong>Controller verification, simulation, and a supervised dry-run are required before cutting material.</p></div>
+
+        <form method="post" action="/projects/{{ project_id }}/export" class="export-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+          <button class="button button-export button-full" type="submit" {% if not export_ready %}disabled title="{{ export_reason }}"{% endif %}>Export reviewed G-code</button>
+          {% if not export_ready %}<p class="disabled-reason">{{ export_reason }}</p>{% endif %}
+        </form>
+      </section>
+    </aside>
+  </main>
+</div>
+{% endblock %}

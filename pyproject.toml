@@ -38,6 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "httpx>=0.28",
     "mypy>=1.11",
     "pytest>=8.3",
     "pytest-cov>=5.0",
@@ -48,6 +49,12 @@ ui = [
     "PySide6>=6.8",
     "pyvista>=0.45",
     "pyvistaqt>=0.11",
+]
+web = [
+    "fastapi>=0.116",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.20",
+    "uvicorn>=0.35",
 ]
 performance = [
     "embreex>=2.17",
@@ -63,6 +70,7 @@ Discussions = "https://github.com/kaa-serpent/3dCamSlicer/discussions"
 [project.scripts]
 rotarycam = "rotarycam.cli:app"
 rotarycam-gui = "rotarycam.gui:main"
+rotarycam-web = "rotarycam.web.launcher:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rotarycam"]
