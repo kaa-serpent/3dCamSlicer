@@ -1,0 +1,7 @@
+HTMX distribution notice
+========================
+
+The adjacent htmx.min.js is the official, version-pinned HTMX 2.0.10 browser
+distribution. It is served locally so RotaryCAM works without network access or a
+JavaScript build step. HTMX is copyright Big Sky Software and contributors and is
+distributed under the Zero-Clause BSD license reproduced in HTMX-LICENSE.txt.

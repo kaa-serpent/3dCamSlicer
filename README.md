@@ -1,95 +1,107 @@
-<p align="center">
-  <img src="docs/assets/rotarycam-social-preview.jpg" alt="RotaryCAM — 4-axis CNC toolpaths for Makera Z1" width="100%">
-</p>
+# RotaryCAM
 
-<h1 align="center">RotaryCAM for Makera Z1</h1>
+RotaryCAM is a Python CAM application for preparing, simulating, and reviewing
+4-axis rotary toolpaths from STL and OBJ models.
 
-<p align="center">
-  A safety-first Python CAM engine and desktop application for generating, simulating,
-  and reviewing 4-axis X/Z/A rotary CNC toolpaths from STL and OBJ meshes.
-</p>
-
-<p align="center">
+<p>
   <a href="https://github.com/kaa-serpent/3dCamSlicer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/kaa-serpent/3dCamSlicer/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://www.python.org/downloads/release/python-3120/"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white"></a>
-  <img alt="284 tests passing locally" src="https://img.shields.io/badge/tests-284%20passing-2ea44f">
-  <img alt="PySide6 desktop UI" src="https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white">
   <a href="LICENSE"><img alt="BSD 3-Clause license" src="https://img.shields.io/badge/license-BSD--3--Clause-blue.svg"></a>
-  <a href="https://github.com/kaa-serpent/3dCamSlicer/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/kaa-serpent/3dCamSlicer?style=flat"></a>
 </p>
 
-RotaryCAM imports STL/OBJ meshes, certifies or envelopes their radial representation,
-protects manual supports, selects flat, ball, and tapered cutters, generates
-roughing/finishing/rest operations, simulates stock removal, validates machine limits,
-and emits a conservative community-derived G-code subset for controller review.
+> [!WARNING]
+> RotaryCAM does not claim that its generic G-code is compatible with a real Makera
+> controller. Review the program, simulate it, verify the exact controller profile,
+> and perform a supervised dry-run before cutting material.
 
-> **Machine safety:** `makera_z1_community_profile()` is deliberately unverified and has
-> no option that silently marks it verified. Export is blocked until
-> `MachineDefinition.profile_verified` is explicitly true in a reviewed, persisted machine
-> configuration. Every generated program must still be reviewed, simulated, dry-run, and
-> verified against the exact Z1 controller, firmware, rotary setup, workholding, and tool.
+## What RotaryCAM provides
 
-## Why RotaryCAM?
+- A guided local web interface with an interactive 3D preview.
+- STL and OBJ import with automatic rotary-axis alignment.
+- Cylindrical and rectangular stock definitions.
+- Flat, ball, and tapered cutter support.
+- Roughing, finishing, rest machining, and manual supports.
+- Sequential stock-removal simulation and residual-stock preview.
+- Machine-limit, tool-reach, support, travel, and safety validation.
+- Guarded G-code export for reviewed and verified machine profiles.
+- A desktop PySide6 interface and a typed command-line interface.
 
-- **One end-to-end workflow:** mesh import, radial sampling, planning, simulation,
-  validation, 3D preview, and guarded export.
-- **Built for rotary geometry:** canonical X/A grids, continuous unwrapped rotary angles,
-  indexed or simultaneous finishing, and explicit radial TCP semantics.
-- **Stock-aware multi-tool planning:** each accepted operation starts from the simulated
-  residual stock left by the preceding cutter.
-- **CNC safety gates:** travel, spindle, safe-radius, reach, support, containment, rapid,
-  and profile-verification checks run before export.
-- **Desktop and CLI interfaces:** use the PySide6/PyVistaQt application for visual review
-  or the typed command-line pipeline for automation.
+The CAM engine is shared by every interface. The web application does not replace or
+duplicate the numerical algorithms.
 
-## Makera Z1 community reference
+## Quick start
 
-The bundled factory combines the conservative controller assumptions from
-`CAM_Post_Processors/Fusion360-profiles/Z1makera.cps` in the separate local Carvera
-Community Profiles checkout (revision `beb09eec32eae28ed92763330916d449084652c0`,
-2026-05-10) with the published [Makera Z1 machine specifications](https://global.makera.com/products/makera-z1-desktop-cnc)
-and [Makera Z1 fourth-axis specifications](https://global.makera.com/products/makera-z1-4th-axis-module).
-Makera declares a 200 x 200 x 100 mm Cartesian work area, a 150 W spindle with a
-13,000 RPM ceiling, a 1,200 mm/min maximum travel speed for the standard Z1, and a
-rotary-stock envelope of 150 mm length by 80 mm diameter. The belt-driven, NEMA 17
-rotary module is listed at 3,600 degrees/min maximum speed and 0.1 degree rotary
-precision. These values differ materially from the Carvera Air rotary envelope and drive,
-so RotaryCAM does not substitute Carvera Air limits. As an explicit
-unverified inference, RotaryCAM maps the declared 200 mm X and 100 mm Z spans to its
-positive `0..200 mm` X and `0..100 mm` radial-TCP limits. The profile uses three decimal
-places and a 45 mm CAM safe radius: the declared 40 mm stock radius plus 5 mm clearance.
-That 45 mm value is a RotaryCAM work-coordinate clearance, not the community post's
-machine-coordinate retract.
-
-The validator blocks explicit cutting feeds above 1,200 mm/min. It does not convert a
-linear `G94` feed into a rotary angular rate: controller interpolation semantics and an
-equivalent rotary radius are not encoded by `ToolpathPoint`, so such a conversion would
-give false assurance. Instead, any rotary motion emits a warning to verify that the actual
-A-axis motion stays at or below 3,600 degrees/min. The published 0.1 degree rotary
-precision is recorded as a capability, not treated as command resolution or used to round
-toolpaths.
-
-The bundled unverified profile deterministically emits `G54`. Before any machining,
-verify that G54 zero places the toolpath's radial origin at the rotary center. A different
-work offset must be a deliberate change to the reviewed persisted `program_header`.
-
-The Z1-specific community changes are its metadata/envelopes, the blocking 13,000 RPM
-limit, and quick-change output in `M6 Tn` order, including tool numbers above six. `G94`
-feed-per-minute initialization is retained as part of the shared/common safe modal subset.
-RotaryCAM deliberately omits inherited controller-specific `M851`/`M852`, `G28`/`G53`,
-`M490`/`M491`, coolant, probing, and tool-length commands pending verification against
-the exact Z1 controller and profile. This software does not claim controller compatibility.
-
-## Setup
-
-Install `uv`, then provision the locked Python 3.12 environment:
+RotaryCAM requires Python 3.12 and [`uv`](https://docs.astral.sh/uv/).
 
 ```powershell
 uv python install 3.12
-uv sync --extra dev --extra ui
+uv sync --extra dev --extra ui --extra web
 ```
 
-## Command line
+Start the recommended local web interface:
+
+```powershell
+uv run rotarycam-web
+```
+
+The browser opens automatically at `http://127.0.0.1:8765`.
+
+Useful options:
+
+```powershell
+uv run rotarycam-web --port 9000
+uv run rotarycam-web --no-browser
+```
+
+The server listens only on `127.0.0.1`. It uses no account, cloud service, database,
+Redis, or Node.js build process. HTMX and Three.js are included locally for offline use.
+
+## Web workflow
+
+The English web interface is designed for screens at least 1024 pixels wide.
+
+1. Create or reopen a local project.
+2. Import an STL or OBJ target model.
+3. Define the stock and select the cutting tools.
+4. Choose the sampling and finishing strategy.
+5. Optionally place supports from the form or the 3D view.
+6. Generate, simulate, review validation results, and export when safe.
+
+Target, stock, supports, toolpaths, and residual stock can be displayed independently.
+Toolpaths can also be filtered by cutter.
+
+Projects are autosaved under:
+
+```text
+%APPDATA%\RotaryCAM\projects\<project-id>
+```
+
+Each project keeps its draft workspace, copied model assets, generated preview data,
+and the canonical project file once the setup is complete.
+
+## Export safety
+
+Export is available only when all of these conditions are satisfied:
+
+- the project setup is complete;
+- the latest generation finished successfully;
+- no input changed after that generation;
+- CAM validation has no blocking error;
+- the selected machine profile has `profile_verified=true`.
+
+The web and desktop interfaces can select a verified profile, but they cannot grant
+verification themselves. Creating or editing a profile clears its verified status.
+The bundled Makera Z1 community profile is intentionally unverified.
+
+## Other interfaces
+
+Start the desktop application:
+
+```powershell
+uv run rotarycam-gui
+```
+
+Use the command line for inspection and automation:
 
 ```powershell
 uv run rotarycam inspect model.stl
@@ -99,113 +111,45 @@ uv run rotarycam simulate project.json
 uv run rotarycam export project.json output.cnc
 ```
 
-`inspect` accepts binary/ASCII STL and OBJ files. The project commands use the versioned
-JSON schema in `rotarycam.project`. STL coordinates are interpreted as millimetres; an
-explicit uniform scale is persisted in the project.
+## Geometry limits
 
-Launch the optional desktop preview with:
+RotaryCAM is intended for solids that can be represented by one radial outer boundary
+around the X rotary axis. Open meshes, disconnected components, inconsistent winding,
+and unsupported radial undercuts can block generation.
 
-```powershell
-uv run rotarycam-gui
-```
+Outer-envelope sampling can machine the reachable exterior of models containing internal
+cavities or recessed features. Those internal features are deliberately omitted from the
+toolpath and reported during validation.
 
-The UI can load meshes and project JSON files, manage validated flat, ball, or tapered bits,
-add or edit cylindrical and rectangular stock, display independent scene layers, pick,
-resize, and remove supports, generate project operations, and export only a current validated
-plan using a verified machine profile. A persistent labeled X/Y/Z orientation triad is shown
-in the lower-left corner of the 3D preview. Raw meshes are aligned automatically to the X
-rotary axis and receive the unverified Makera Z1 community profile; generation becomes
-available after stock and at least one bit are configured. The save dialog defaults to the
-community `.cnc` convention but preserves any explicit alternate output path.
-
-The Strategies panel selects either continuous helical finishing (simultaneous X/A)
-or indexed longitudinal finishing. Longitudinal finishing fixes A during each cutting
-pass, traverses the cutter along X, retracts to the validated safe radius, then indexes A
-before the next pass. Adjacent passes alternate their X direction to reduce non-cutting
-travel. The selected strategy is stored in the project machining settings.
-
-Long CAM jobs expose three explicit phases in the status bar, Operations panel, and
-Validation panel: radial sampling, sequential multi-tool planning, and 3D-preview
-preparation. The preview arrays are prepared in the background and rendered as one actor
-per operation while preserving every source toolpath as an independent polyline. Operation
-summaries report the tool, strategy, path and point counts, and estimated removed volume.
-The Operations panel creates one `Show toolpaths` checkbox per cutting bit used by the
-generated plan. These filters can isolate what each bit will cut and retain their individual
-state when the complete toolpath layer is hidden and shown again.
-
-Multi-tool planning is stock-aware: every accepted toolpath is simulated in order, and the
-next path or cutter receives the resulting residual stock rather than the original blank.
-Every simulated transition is rejected unless it preserves the grid and satisfies
-`effective_target <= new_stock <= old_stock`; a rejected low-gain cutter cannot change the
-stock passed to the next candidate.
-
-The cutting-bit dialog is personalized for the project's Makera Z1 setup: new bits
-default to a 1/8-inch (3.175 mm) shank independently from the cutting diameter. All
-values remain editable, and feeds, stepdown, and spindle speed must be confirmed for
-the actual bit and material. A tapered/V-bit records its narrow tip diameter, maximum
-cutting diameter, and the axial distance over which it widens to that maximum.
-The personal bit library is stored automatically as versioned JSON in
-`%APPDATA%\RotaryCAM\tools.json`; the Tools panel also provides explicit Save and Reload
-actions for portable JSON libraries. Its dedicated management page supports adding, editing,
-and deleting bits. A checkbox on every library entry selects the subset used by the current
-project; unselected bits remain available in the personal library but are not passed to the
-CAM planner.
-
-Machine profiles have a separate management page for adding, editing, deleting, and selecting
-the active profile. The personal machine library is stored as versioned JSON in
-`%APPDATA%\RotaryCAM\machines.json`. Creating or editing a profile in the UI always clears its
-verified status; the page deliberately has no control that can grant verification. Export
-therefore remains blocked until a separately reviewed persisted profile is selected with
-`profile_verified=true`, followed by regeneration, simulation review, and a dry-run.
-
-## Geometry conventions
-
-- X is longitudinal and stock occupies `[0, length]`.
-- The rotary section is centred on `Y = Z = 0`.
-- `A = degrees(atan2(z, y)) mod 360`; A0 points toward +Y and increases toward +Z.
-- `R = hypot(y, z)`; `ToolpathPoint.z` is the commanded radial tool-tip TCP.
-- Internal units are millimetres, degrees, mm/min, and rpm.
-- `RotaryGrid` arrays use canonical `(X, A)` order and `[0, 360)` grid angles.
-- Toolpaths use continuous unwrapped A angles.
-
-Only solids with one continuous material interval from the rotary axis to a single outer
-boundary are CAM-compatible. Open meshes, shells, off-axis bodies, multiple components,
-and radial undercuts remain inspectable but block toolpath generation.
-
-Raw desktop imports deterministically map the mesh's longest bounding-box axis to X before
-centering it on the rotary axis. For watertight single-component meshes that contain holes,
-cavities, or radial undercuts, new raw imports default to an **outer radial envelope**
-approximation. It retains the farthest boundary at each X/A sample and therefore machines only
-the reachable exterior; recessed and internal features are deliberately omitted. The Strategies
-panel can turn this behavior off when strict radial-solid certification is required. Persisted
-projects retain their saved sampling mode. Envelope mode still blocks open meshes, inconsistent
-winding, multiple components, and any X/A ray that has no mesh intersection.
+Internal units are millimetres, degrees, mm/min, and rpm. X is longitudinal, A is rotary,
+and toolpath Z values represent the radial tool-tip position.
 
 ## Development
 
+Run the complete local checks before submitting changes:
+
 ```powershell
+uv sync --extra dev --extra ui --extra web
 uv run pytest
 uv run ruff check .
 uv run mypy src/rotarycam
 git diff --check
 ```
 
-The core engine has no GUI dependency; PySide6/PyVistaQt live in the `ui` extra and
-optional acceleration packages live in `performance`.
+The numerical engine under `src/rotarycam` does not depend on the GUI. PySide6 and
+PyVistaQt are optional `ui` dependencies; FastAPI, Jinja2, Uvicorn, and upload support
+belong to the optional `web` extra.
 
-## Community
+## Contributing
 
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
-- Use the [issue tracker](https://github.com/kaa-serpent/3dCamSlicer/issues) for reproducible
-  bugs and scoped feature requests.
-- Use [GitHub Discussions](https://github.com/kaa-serpent/3dCamSlicer/discussions) for usage
-  questions, ideas, and project feedback.
-- Report security-sensitive findings privately according to [SECURITY.md](SECURITY.md).
-- All participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use
+[GitHub Issues](https://github.com/kaa-serpent/3dCamSlicer/issues) for reproducible bugs
+and [GitHub Discussions](https://github.com/kaa-serpent/3dCamSlicer/discussions) for
+questions and ideas.
+
+Security-sensitive findings should follow [SECURITY.md](SECURITY.md). Participation is
+covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-RotaryCAM is open-source software distributed under the [BSD 3-Clause License](LICENSE).
-Source and binary redistributions must preserve the copyright and license notice crediting
-**kaa-serpent**. The copyright holder's name may not be used to endorse derived products
-without prior written permission.
+RotaryCAM is distributed under the [BSD 3-Clause License](LICENSE).

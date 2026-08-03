@@ -21,7 +21,7 @@ RotaryCAM targets Python 3.12 and uses `uv`:
 
 ```powershell
 uv python install 3.12
-uv sync --extra dev --extra ui
+uv sync --extra dev --extra ui --extra web
 ```
 
 ## Required checks

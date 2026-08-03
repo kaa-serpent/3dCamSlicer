@@ -1,0 +1,13 @@
+Three.js 0.180.0
+https://github.com/mrdoob/three.js/tree/r180
+
+Vendored from the official npm distribution:
+- build/three.core.js
+- build/three.module.js
+- examples/jsm/loaders/STLLoader.js
+- examples/jsm/controls/OrbitControls.js
+
+The example modules import ./three.module.js instead of the package name
+"three" so they run directly in a browser without an import map. No other
+source changes were made. Three.js is distributed under the MIT License; see
+THREE-LICENSE.txt in this directory.

@@ -1,0 +1,17 @@
+<li class="workflow-step {% if complete %}is-complete{% endif %} {% if not available %}is-unavailable{% endif %}">
+  <button type="button"
+          class="step-button"
+          data-step-select="{{ step_id }}"
+          aria-controls="panel-{{ step_id }}"
+          aria-selected="{{ 'true' if active_step|default('model') == step_id else 'false' }}"
+          {% if not available %}aria-disabled="true" title="{{ unavailable_reason|default('Complete the previous step first') }}"{% endif %}>
+    <span class="step-index" aria-hidden="true">
+      {% if complete %}<span class="check-mark">✓</span>{% else %}{{ step_number }}{% endif %}
+    </span>
+    <span class="step-copy">
+      <strong>{{ step_label }}</strong>
+      <small>{{ step_hint }}</small>
+    </span>
+    <span class="step-chevron" aria-hidden="true">›</span>
+  </button>
+</li>
