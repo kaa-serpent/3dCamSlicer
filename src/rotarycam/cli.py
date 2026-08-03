@@ -34,7 +34,7 @@ class _InspectionReport(Protocol):
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    help="Inspect and prepare X/Z/A rotary machining projects.",
+    help="Inspect and prepare simultaneous X/Y/Z/A rotary machining projects.",
 )
 
 
@@ -137,33 +137,33 @@ def inspect_model(
 def sample_project(
     project: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
 ) -> None:
-    """Build and certify the protected radial target for a project."""
+    """Build the shared-lattice volumetric stock and protected target."""
 
     try:
         engine = _project_engine(project)
-        grid = engine.build_target()
+        _, target = engine.build_volumetric_geometry()
     except (RotaryCamError, OSError, ValueError) as caught_error:
         _project_error(caught_error)
-    typer.echo(f"Sampled grid: {grid.shape[0]} x {grid.shape[1]} (X x A)")
-    typer.echo(f"Radial certification: {grid.undercut_status.value}")
+    shape = target.lattice.shape
+    typer.echo(f"Sampled volume: {shape[0]} x {shape[1]} x {shape[2]} (X x Y x Z)")
 
 
 @app.command("plan")
 def plan_project(
     project: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
 ) -> None:
-    """Generate an automatic multi-tool machining plan."""
+    """Generate a volumetric freeform XYZA machining plan."""
 
     try:
         engine = _project_engine(project)
-        operations = engine.generate_plan()
+        plan = engine.generate_xyza_plan()
     except (RotaryCamError, OSError, ValueError) as caught_error:
         _project_error(caught_error)
-    typer.echo(f"Generated operations: {len(operations)}")
-    for operation in operations:
+    typer.echo(f"Generated passes: {len(plan.passes)}")
+    for planned_pass in plan.passes:
         typer.echo(
-            f"T{operation.tool.number} {operation.strategy}: "
-            f"{len(operation.toolpaths)} path(s)"
+            f"T{planned_pass.tool_number} {planned_pass.kind.value}: "
+            f"{len(planned_pass.blocks)} block(s)"
         )
 
 
@@ -171,29 +171,40 @@ def plan_project(
 def simulate_project(
     project: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
 ) -> None:
-    """Plan and simulate a project on the cylindrical stock grid."""
+    """Plan and simulate cutter removal on the volumetric stock."""
 
     try:
         engine = _project_engine(project)
-        engine.generate_plan()
-        result = engine.simulate()
+        engine.generate_xyza_plan()
+        reports = engine.simulate_xyza()
     except (RotaryCamError, OSError, ValueError) as caught_error:
         _project_error(caught_error)
-    typer.echo(f"Removed volume: {result.removed_volume:.3f} mm^3")
-    typer.echo(f"Maximum remaining error: {result.max_remaining_error:.3f} mm")
+    typer.echo(f"Removed voxels: {sum(report.removed_voxels for report in reports)}")
+    typer.echo(
+        f"Residual voxels: {reports[-1].residual_voxels if reports else 0}"
+    )
 
 
 @app.command("export")
 def export_project(
     project: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
     output: Annotated[Path, typer.Argument(dir_okay=False)],
+    ack_inaccessible: Annotated[
+        str | None,
+        typer.Option(
+            "--ack-inaccessible",
+            help="Exact digest of the current inaccessible-residue report.",
+        ),
+    ] = None,
 ) -> None:
-    """Generate and export G-code after all blocking safety checks."""
+    """Generate and atomically export v2 XYZA G-code after safety checks."""
 
     try:
         engine = _project_engine(project)
-        engine.generate_plan()
-        engine.export_gcode(output)
+        engine.prepare_xyza_export()
+        engine.export_xyza_gcode(
+            output, acknowledgement_digest=ack_inaccessible
+        )
     except (RotaryCamError, OSError, ValueError) as caught_error:
         _project_error(caught_error)
     typer.echo(f"G-code written to {output.resolve()}")

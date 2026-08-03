@@ -22,6 +22,7 @@ DEFAULT_SUPPORT_TRANSITION_MM = 0.5
 class SceneLayer(StrEnum):
     TARGET = "target"
     STOCK = "stock"
+    MACHINE = "machine"
     SUPPORTS = "supports"
     TOOLPATHS = "toolpaths"
     RESIDUAL = "residual"

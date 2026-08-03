@@ -1,5 +1,6 @@
 """Cutting tool definitions and validation."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
@@ -11,6 +12,19 @@ class ToolType(StrEnum):
     FLAT = "flat"
     BALL = "ball"
     TAPERED = "tapered"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolHolder:
+    """Conservative cylindrical holder envelope in millimetres."""
+
+    diameter: float
+    length: float
+
+    def __post_init__(self) -> None:
+        for field_name, value in (("diameter", self.diameter), ("length", self.length)):
+            if not isfinite(value) or value <= 0.0:
+                raise ValueError(f"holder {field_name} must be finite and greater than zero")
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +50,8 @@ class Tool:
     spindle_rpm: int
     tip_diameter: float | None = None
     taper_length: float | None = None
+    stickout: float | None = None
+    holder: ToolHolder | None = None
 
     def __post_init__(self) -> None:
         """Reject physically inconsistent tool definitions."""
@@ -86,9 +102,18 @@ class Tool:
                 raise ValueError("taper_length must not exceed cutting_length")
         elif self.tip_diameter is not None or self.taper_length is not None:
             raise ValueError("tip_diameter and taper_length are only valid for tapered bits")
+        if self.stickout is not None:
+            if not isfinite(self.stickout) or self.stickout <= 0.0:
+                raise ValueError("stickout must be finite and greater than zero")
+            if self.stickout < self.flute_length:
+                raise ValueError("stickout must not be shorter than flute_length")
+            if self.stickout > self.overall_length:
+                raise ValueError("stickout must not exceed overall_length")
+        if self.holder is not None and not isinstance(self.holder, ToolHolder):
+            raise TypeError("holder must be a ToolHolder")
 
 
-def validate_unique_tool_numbers(tools: list[Tool]) -> None:
+def validate_unique_tool_numbers(tools: Sequence[Tool]) -> None:
     """Validate the collection-level uniqueness invariant for tool numbers."""
     seen: set[int] = set()
     duplicates: set[int] = set()

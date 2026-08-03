@@ -108,7 +108,7 @@ uv run rotarycam inspect model.stl
 uv run rotarycam sample project.json
 uv run rotarycam plan project.json
 uv run rotarycam simulate project.json
-uv run rotarycam export project.json output.cnc
+uv run rotarycam export project.json output.nc
 ```
 
 ## Geometry limits

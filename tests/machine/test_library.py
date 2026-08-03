@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from rotarycam.config import AxisLimits, MachineDefinition, RotaryAxisConfig
 from rotarycam.machine.library import (
@@ -63,9 +62,9 @@ def test_machine_library_rejects_names_that_only_differ_by_case(tmp_path: Path) 
 
 def test_machine_library_rejects_unknown_schema_version(tmp_path: Path) -> None:
     path = tmp_path / "machines.json"
-    path.write_text(json.dumps({"schema_version": 2, "profiles": []}), encoding="utf-8")
+    path.write_text(json.dumps({"schema_version": 99, "profiles": []}), encoding="utf-8")
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError, match="schema_version"):
         load_machine_library(path)
 
 

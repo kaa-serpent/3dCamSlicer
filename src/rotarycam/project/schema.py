@@ -11,12 +11,16 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from rotarycam.config import MachineDefinition, MachiningSettings
-from rotarycam.supports.models import Support
+from rotarycam.supports.models import (
+    RetentionVolume,
+    Support,
+    migrate_support_to_retention,
+)
 
-PROJECT_SCHEMA_VERSION: Literal[1] = 1
+PROJECT_SCHEMA_VERSION: Literal[2] = 2
 
 type MatrixRow = tuple[float, float, float, float]
 type Matrix4x4 = tuple[MatrixRow, MatrixRow, MatrixRow, MatrixRow]
@@ -91,6 +95,26 @@ class ToolType(StrEnum):
     TAPERED = "tapered"
 
 
+class PipelineMode(StrEnum):
+    """Persisted CAM pipeline selection."""
+
+    XYZA = "xyza"
+
+
+class ToolHolderConfig(_ProjectRecord):
+    """Conservative cylindrical holder envelope in millimetres."""
+
+    diameter: float = Field(gt=0.0)
+    length: float = Field(gt=0.0)
+
+    @field_validator("diameter", "length")
+    @classmethod
+    def validate_dimensions(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("holder dimensions must be finite")
+        return value
+
+
 class ToolConfig(_ProjectRecord):
     """JSON representation of a supported cutter geometry."""
 
@@ -109,6 +133,8 @@ class ToolConfig(_ProjectRecord):
     spindle_rpm: int = Field(gt=0)
     tip_diameter: float | None = Field(default=None, gt=0.0)
     taper_length: float | None = Field(default=None, gt=0.0)
+    stickout: float | None = Field(default=None, gt=0.0)
+    holder: ToolHolderConfig | None = None
 
     @model_validator(mode="after")
     def validate_geometry(self) -> ToolConfig:
@@ -144,22 +170,33 @@ class ToolConfig(_ProjectRecord):
                 raise ValueError("taper_length must not exceed cutting_length")
         elif self.tip_diameter is not None or self.taper_length is not None:
             raise ValueError("taper dimensions are only valid for tapered bits")
+        if self.stickout is not None:
+            if not math.isfinite(self.stickout):
+                raise ValueError("stickout must be finite")
+            if self.stickout < self.flute_length:
+                raise ValueError("stickout must not be shorter than flute_length")
+            if self.stickout > self.overall_length:
+                raise ValueError("stickout must not exceed overall_length")
         return self
 
 
 class RotaryCamProject(_ProjectRecord):
-    """Complete persisted project envelope for schema version 1."""
+    """Complete persisted project envelope for schema version 2."""
 
-    schema_version: Literal[1] = PROJECT_SCHEMA_VERSION
+    schema_version: Literal[2] = PROJECT_SCHEMA_VERSION
+    pipeline: Literal[PipelineMode.XYZA] = PipelineMode.XYZA
     mesh_path: Path
     mesh_scale: float = Field(default=1.0, gt=0.0)
     mesh_transform: Matrix4x4 = Field(default_factory=identity_transform)
     stock: StockDefinition
     tools: list[ToolConfig] = Field(default_factory=list)
     supports: list[Support] = Field(default_factory=list)
+    retention_volumes: list[RetentionVolume] = Field(default_factory=list)
     machining_settings: MachiningSettings = Field(default_factory=MachiningSettings)
     machine: MachineDefinition
     generated_operations: list[dict[str, Any]] = Field(default_factory=list)
+
+    _migrated_v1_source: Path | None = PrivateAttr(default=None)
 
     @field_validator("mesh_path")
     @classmethod
@@ -192,3 +229,46 @@ class RotaryCamProject(_ProjectRecord):
         if len(numbers) != len(set(numbers)):
             raise ValueError("tool numbers must be unique")
         return self
+
+
+class RotaryCamProjectV1(_ProjectRecord):
+    """Read-only compatibility DTO for the original radial project schema."""
+
+    schema_version: Literal[1] = 1
+    mesh_path: Path
+    mesh_scale: float = Field(default=1.0, gt=0.0)
+    mesh_transform: Matrix4x4 = Field(default_factory=identity_transform)
+    stock: StockDefinition
+    tools: list[ToolConfig] = Field(default_factory=list)
+    supports: list[Support] = Field(default_factory=list)
+    machining_settings: MachiningSettings = Field(default_factory=MachiningSettings)
+    machine: MachineDefinition
+    generated_operations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def migrate_project_v1(project: RotaryCamProjectV1) -> RotaryCamProject:
+    """Create a v2 XYZA project while invalidating every unsafe derived value."""
+
+    machine = project.machine.model_copy(
+        update={
+            "profile_verified": False,
+            "y_limits": None,
+            "xyza_configuration": None,
+            "machine_assembly_configured": False,
+        }
+    )
+    return RotaryCamProject(
+        mesh_path=project.mesh_path,
+        mesh_scale=project.mesh_scale,
+        mesh_transform=project.mesh_transform,
+        stock=project.stock,
+        tools=[
+            tool.model_copy(update={"stickout": None, "holder": None})
+            for tool in project.tools
+        ],
+        supports=[],
+        retention_volumes=[migrate_support_to_retention(item) for item in project.supports],
+        machining_settings=project.machining_settings,
+        machine=machine,
+        generated_operations=[],
+    )
