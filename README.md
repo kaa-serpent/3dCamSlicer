@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/rotarycam-social-preview.jpg" alt="RotaryCAM — volumetric 4-axis CNC planning" width="100%">
+  <img src="docs/assets/portfolio-preview.jpg" alt="RotaryCAM — volumetric 4-axis CNC planning" width="100%">
 </p>
 
 <h1 align="center">RotaryCAM</h1>
